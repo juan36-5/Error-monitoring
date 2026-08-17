@@ -6,9 +6,9 @@ from datetime import datetime
 import re
 import os
 
-# ============ SEO CHECKER FUNCTION (MUST BE DEFINED FIRST) ============
+# ============ SEO CHECKER FUNCTION ============
 def check_seo(url):
-    """Check SEO for a single URL"""
+    """Check SEO for a single URL - Returns REAL data from the website"""
     result = {
         'url': url,
         'score': 0,
@@ -16,14 +16,20 @@ def check_seo(url):
         'error_details': [],
         'title': None,
         'description': None,
+        'description_length': 0,
         'h1': None,
         'word_count': 0,
         'total_images': 0,
         'images_with_alt': 0,
-        'last_check': datetime.now().strftime('%Y-%m-%d %H:%M')
+        'last_check': datetime.now().strftime('%Y-%m-%d %H:%M'),
+        'status_code': None,
+        'response_time': None
     }
     
     try:
+        import time
+        start_time = time.time()
+        
         # Add http if missing
         if not url.startswith('http'):
             url = 'https://' + url
@@ -33,6 +39,9 @@ def check_seo(url):
             'User-Agent': 'Mozilla/5.0 (compatible; SEO-Monitor/1.0)'
         })
         
+        result['status_code'] = response.status_code
+        result['response_time'] = round(time.time() - start_time, 2)
+        
         if response.status_code != 200:
             result['error_details'].append(f"❌ HTTP {response.status_code} Error")
             result['errors'] += 1
@@ -41,7 +50,7 @@ def check_seo(url):
         # Parse HTML
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Check title
+        # ====== CHECK TITLE ======
         title = soup.find('title')
         if title and title.text.strip():
             result['title'] = title.text.strip()
@@ -57,23 +66,30 @@ def check_seo(url):
             result['error_details'].append("❌ Missing title tag")
             result['errors'] += 1
         
-        # Check meta description
+        # ====== CHECK META DESCRIPTION - GET REAL CONTENT ======
         meta_desc = soup.find('meta', attrs={'name': 'description'})
-        if meta_desc and meta_desc.get('content', '').strip():
-            result['description'] = meta_desc.get('content', '').strip()
-            result['score'] += 25
-            desc_len = len(meta_desc.get('content', '').strip())
-            if desc_len < 50:
-                result['error_details'].append(f"⚠️ Description too short: {desc_len} chars (< 50)")
-                result['errors'] += 1
-            elif desc_len > 160:
-                result['error_details'].append(f"⚠️ Description too long: {desc_len} chars (> 160)")
+        if meta_desc:
+            desc_content = meta_desc.get('content', '').strip()
+            if desc_content:
+                result['description'] = desc_content
+                result['description_length'] = len(desc_content)
+                result['score'] += 25
+                
+                # Check description length
+                if len(desc_content) < 50:
+                    result['error_details'].append(f"⚠️ Description too short: {len(desc_content)} chars (< 50)")
+                    result['errors'] += 1
+                elif len(desc_content) > 160:
+                    result['error_details'].append(f"⚠️ Description too long: {len(desc_content)} chars (> 160)")
+                    result['errors'] += 1
+            else:
+                result['error_details'].append("❌ Meta description is empty")
                 result['errors'] += 1
         else:
             result['error_details'].append("❌ Missing meta description")
             result['errors'] += 1
         
-        # Check H1
+        # ====== CHECK H1 ======
         h1 = soup.find('h1')
         if h1 and h1.text.strip():
             result['h1'] = h1.text.strip()
@@ -88,7 +104,7 @@ def check_seo(url):
             result['error_details'].append(f"⚠️ Multiple H1 tags found: {len(h1s)}")
             result['errors'] += 1
         
-        # Check word count
+        # ====== CHECK WORD COUNT ======
         text = soup.get_text()
         words = len(re.findall(r'\w+', text))
         result['word_count'] = words
@@ -100,7 +116,7 @@ def check_seo(url):
             result['error_details'].append(f"⚠️ Low word count: {words} words (< 100)")
             result['errors'] += 1
         
-        # Check images
+        # ====== CHECK IMAGES ======
         images = soup.find_all('img')
         result['total_images'] = len(images)
         images_without_alt = [img for img in images if not img.get('alt')]
@@ -112,10 +128,11 @@ def check_seo(url):
         elif images:
             result['score'] += 10
         
-        # Check links
+        # ====== CHECK LINKS ======
         links = soup.find_all('a', href=True)
         if links:
             result['score'] += 5
+            # Check for broken links (basic)
             broken_links = 0
             for link in links[:5]:
                 href = link['href']
@@ -133,12 +150,12 @@ def check_seo(url):
             result['error_details'].append("⚠️ No links found on page")
             result['errors'] += 1
         
-        # Check for schema markup
+        # ====== CHECK SCHEMA MARKUP ======
         schema = soup.find('script', attrs={'type': 'application/ld+json'})
         if schema:
             result['score'] += 5
         
-        # Check viewport meta
+        # ====== CHECK VIEWPORT ======
         viewport = soup.find('meta', attrs={'name': 'viewport'})
         if viewport:
             result['score'] += 5
@@ -146,7 +163,7 @@ def check_seo(url):
             result['error_details'].append("⚠️ Missing viewport meta tag")
             result['errors'] += 1
         
-        # Check canonical
+        # ====== CHECK CANONICAL ======
         canonical = soup.find('link', attrs={'rel': 'canonical'})
         if not canonical:
             result['error_details'].append("⚠️ No canonical tag found")
@@ -174,7 +191,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ============ TITLE ============
 st.title("🔍 SEO Monitor Dashboard")
 st.markdown("---")
 
@@ -192,6 +208,9 @@ def auto_import_sites():
             for line in f:
                 url = line.strip()
                 if url and not url.startswith('#'):
+                    # Skip if it looks like Python code
+                    if url.startswith('import') or url.startswith('from'):
+                        continue
                     if not url.startswith('http'):
                         url = 'https://' + url
                     if url not in st.session_state.sites:
@@ -199,110 +218,25 @@ def auto_import_sites():
         if st.session_state.sites:
             st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
 
-# Run auto-import
 auto_import_sites()
 
 # ============ SIDEBAR ============
 with st.sidebar:
     st.header("📋 Site Management")
-    
-    # Show site count
     st.metric("Total Sites", len(st.session_state.sites))
     
     st.markdown("---")
     
-    # Add single site
-    st.subheader("➕ Add Single Site")
-    new_url = st.text_input("Website URL", placeholder="https://example.com")
-    if st.button("Add Site", use_container_width=True):
-        if new_url:
-            if not new_url.startswith('http'):
-                new_url = 'https://' + new_url
-            if new_url not in st.session_state.sites:
-                st.session_state.sites.append(new_url)
-                st.success(f"✅ Added {new_url}")
-                st.rerun()
-            else:
-                st.warning("⚠️ Site already exists")
-    
-    st.markdown("---")
-    
-    # Bulk Import from sites.txt
-    st.subheader("📥 Bulk Import")
-    
-    if os.path.exists('sites.txt'):
-        with open('sites.txt', 'r') as f:
-            total_in_file = sum(1 for line in f if line.strip() and not line.startswith('#'))
-        st.info(f"📄 Found sites.txt with {total_in_file} sites")
-        
-        if st.button("📂 Import All from sites.txt", use_container_width=True):
-            imported = 0
-            with open('sites.txt', 'r') as f:
-                for line in f:
-                    url = line.strip()
-                    if url and not url.startswith('#'):
-                        if not url.startswith('http'):
-                            url = 'https://' + url
-                        if url not in st.session_state.sites:
-                            st.session_state.sites.append(url)
-                            imported += 1
-            if imported > 0:
-                st.success(f"✅ Imported {imported} new sites!")
-                st.rerun()
-            else:
-                st.warning("No new sites to import")
-    else:
-        st.warning("⚠️ sites.txt not found")
-    
-    st.markdown("---")
-    
-    # Bulk Paste
-    st.subheader("📝 Bulk Paste")
-    bulk_urls = st.text_area(
-        "Paste URLs (one per line)",
-        placeholder="game365ph.org\nkalaroko.org\njackpotphl.org",
-        height=100
-    )
-    if st.button("➕ Add All Pasted", use_container_width=True):
-        if bulk_urls:
-            urls = [url.strip() for url in bulk_urls.split('\n') if url.strip()]
-            added = 0
-            for url in urls:
-                if not url.startswith('http'):
-                    url = 'https://' + url
-                if url not in st.session_state.sites:
-                    st.session_state.sites.append(url)
-                    added += 1
-            st.success(f"✅ Added {added} of {len(urls)} sites!")
-            st.rerun()
-        else:
-            st.warning("Please paste some URLs first")
-    
-    st.markdown("---")
-    
-    # Actions
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🧹 Clear All", use_container_width=True):
-            st.session_state.sites = []
-            st.session_state.results = {}
-            st.rerun()
-    with col2:
-        if st.button("📊 Export Sites", use_container_width=True):
-            if st.session_state.sites:
-                sites_text = "\n".join(st.session_state.sites)
-                st.download_button(
-                    label="📥 Download sites.txt",
-                    data=sites_text,
-                    file_name="exported_sites.txt",
-                    mime="text/plain"
-                )
+    # Clear All button
+    if st.button("🧹 Clear All Sites", use_container_width=True):
+        st.session_state.sites = []
+        st.session_state.results = {}
+        st.rerun()
 
 # ============ MAIN TABS ============
 tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 SEO Checker", "📈 Reports"])
 
 with tab1:
-    # Summary cards
     col1, col2, col3, col4 = st.columns(4)
     
     total_sites = len(st.session_state.sites)
@@ -323,32 +257,10 @@ with tab1:
     with col4:
         st.metric("📊 Avg SEO Score", f"{avg_score:.1f}/100")
     
-    # Site list with pagination
     st.subheader("📋 Monitored Sites")
     if st.session_state.sites:
-        sites_per_page = 20
-        total_pages = (len(st.session_state.sites) - 1) // sites_per_page + 1
-        
-        if 'page' not in st.session_state:
-            st.session_state.page = 1
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            if st.button("◀ Previous", disabled=(st.session_state.page <= 1)):
-                st.session_state.page -= 1
-                st.rerun()
-        with col2:
-            st.write(f"Page {st.session_state.page} of {total_pages}")
-        with col3:
-            if st.button("Next ▶", disabled=(st.session_state.page >= total_pages)):
-                st.session_state.page += 1
-                st.rerun()
-        
-        start_idx = (st.session_state.page - 1) * sites_per_page
-        end_idx = min(start_idx + sites_per_page, len(st.session_state.sites))
-        
         df_data = []
-        for site in st.session_state.sites[start_idx:end_idx]:
+        for site in st.session_state.sites[:50]:  # Show first 50
             status = "✅ Active"
             if site in st.session_state.results:
                 result = st.session_state.results[site]
@@ -370,74 +282,99 @@ with tab1:
         df = pd.DataFrame(df_data)
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info("No sites added yet. Import from sites.txt or add manually!")
+        st.info("No sites added yet. Click 'Check All' to import from sites.txt")
 
 with tab2:
     st.header("🔍 Check SEO for Your Sites")
     
-    # Check all button
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("🚀 Check All", type="primary", use_container_width=True):
-            if st.session_state.sites:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                results_container = st.empty()
+    if st.button("🚀 Check All Sites", type="primary", use_container_width=True):
+        if st.session_state.sites:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            results_container = st.empty()
+            
+            total = len(st.session_state.sites)
+            results_list = []
+            
+            for i, url in enumerate(st.session_state.sites):
+                status_text.text(f"🔄 Checking {i+1}/{total}: {url}")
+                result = check_seo(url)
+                result['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+                st.session_state.results[url] = result
+                results_list.append(result)
+                progress_bar.progress((i + 1) / total)
                 
-                total = len(st.session_state.sites)
-                results_list = []
-                
-                for i, url in enumerate(st.session_state.sites):
-                    status_text.text(f"🔄 Checking {i+1}/{total}: {url}")
-                    
-                    # Perform SEO check
-                    result = check_seo(url)
-                    result['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-                    st.session_state.results[url] = result
-                    results_list.append(result)
-                    
-                    # Update progress
-                    progress_bar.progress((i + 1) / total)
-                    
-                    # Show current result
-                    with results_container.container():
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Checked", f"{i+1}/{total}")
-                        with col2:
-                            errors_found = sum(1 for r in results_list if r.get('errors', 0) > 0)
-                            st.metric("Sites with Issues", errors_found)
-                        with col3:
-                            avg = sum(r.get('score', 0) for r in results_list) / (i+1)
-                            st.metric("Avg Score", f"{avg:.1f}")
-                
-                status_text.text("✅ All sites checked!")
-                st.success(f"✅ Successfully checked all {total} sites!")
-                st.rerun()
-            else:
-                st.warning("⚠️ No sites to check. Add some first!")
+                # Show live stats
+                with results_container.container():
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Checked", f"{i+1}/{total}")
+                    with col2:
+                        errors_found = sum(1 for r in results_list if r.get('errors', 0) > 0)
+                        st.metric("Sites with Issues", errors_found)
+                    with col3:
+                        avg = sum(r.get('score', 0) for r in results_list) / (i+1)
+                        st.metric("Avg Score", f"{avg:.1f}")
+            
+            status_text.text("✅ All sites checked!")
+            st.success(f"✅ Successfully checked all {total} sites!")
+            st.rerun()
+        else:
+            st.warning("⚠️ No sites to check. Import from sites.txt first!")
     
-    # Display results for checked sites
+    # Show results with REAL meta descriptions
     if st.session_state.results:
-        st.subheader("📊 Recent Results")
+        st.subheader("📊 Detailed SEO Results")
         
-        recent_results = list(st.session_state.results.items())[-10:]
+        # Create a dataframe with all results
+        results_data = []
+        for url, result in st.session_state.results.items():
+            results_data.append({
+                'Site': url.replace('https://', ''),
+                'Score': result.get('score', 0),
+                'Title': result.get('title', '❌ Missing'),
+                'Description': result.get('description', '❌ Missing'),
+                'Desc Length': result.get('description_length', 0),
+                'Word Count': result.get('word_count', 0),
+                'H1': result.get('h1', '❌ Missing')[:50] + '...' if result.get('h1') and len(result.get('h1', '')) > 50 else result.get('h1', '❌ Missing'),
+                'Errors': result.get('errors', 0),
+                'Status': result.get('status_code', 'N/A'),
+                'Response Time': f"{result.get('response_time', 0)}s"
+            })
         
-        for url, result in recent_results:
+        df_results = pd.DataFrame(results_data)
+        st.dataframe(df_results, use_container_width=True, hide_index=True)
+        
+        # Show detailed view for each site
+        st.subheader("🔍 Detailed View by Site")
+        for url, result in list(st.session_state.results.items())[:10]:  # Show first 10
             with st.expander(f"🔍 {url.replace('https://', '')}", expanded=False):
                 col1, col2 = st.columns([2, 1])
-                
                 with col1:
                     st.write(f"**Score:** {result.get('score', 0)}/100")
                     st.write(f"**Title:** {result.get('title', '❌ Missing')}")
-                    st.write(f"**Description:** {result.get('description', '❌ Missing')[:100]}...")
+                    
+                    # Display REAL meta description
+                    description = result.get('description')
+                    if description:
+                        st.write(f"**Meta Description:**")
+                        st.info(f"📝 {description}")
+                        st.write(f"**Length:** {len(description)} characters")
+                    else:
+                        st.error("❌ No meta description found")
+                    
                     st.write(f"**Word Count:** {result.get('word_count', 0)}")
+                    st.write(f"**H1 Heading:** {result.get('h1', '❌ Missing')}")
+                    st.write(f"**Status Code:** {result.get('status_code', 'N/A')}")
+                    st.write(f"**Response Time:** {result.get('response_time', 0)}s")
                 
                 with col2:
                     if result.get('errors', 0) > 0:
                         st.error(f"⚠️ {result.get('errors', 0)} issues found")
                     else:
                         st.success("✅ No issues found")
+                    
+                    st.write(f"**Images:** {result.get('images_with_alt', 0)}/{result.get('total_images', 0)} have alt text")
                 
                 if result.get('error_details'):
                     st.write("**Issues Found:**")
@@ -446,26 +383,22 @@ with tab2:
 
 with tab3:
     st.header("📈 SEO Reports")
-    
     if st.session_state.results:
-        # Create summary dataframe
         data = []
         for url, result in st.session_state.results.items():
             data.append({
                 'Site': url.replace('https://', ''),
                 'Score': result.get('score', 0),
                 'Title': result.get('title', 'Missing'),
-                'Description': '✅' if result.get('description') else '❌',
+                'Description': result.get('description', 'Missing')[:100] + '...' if result.get('description') else 'Missing',
+                'Description Length': result.get('description_length', 0),
                 'H1 Tag': '✅' if result.get('h1') else '❌',
                 'Word Count': result.get('word_count', 0),
-                'Issues': result.get('errors', 0),
-                'Last Check': result.get('last_check', 'Never')
+                'Issues': result.get('errors', 0)
             })
         
         df = pd.DataFrame(data)
         df = df.sort_values('Score', ascending=False)
-        
-        st.subheader("📊 SEO Score Rankings")
         st.dataframe(df, use_container_width=True, hide_index=True)
         
         # Statistics
@@ -503,10 +436,8 @@ with tab3:
     else:
         st.info("Run a scan first to generate reports")
 
-# ============ FOOTER ============
 st.markdown("---")
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     st.caption(f"📊 Total Sites: {len(st.session_state.sites)} | Checked: {len(st.session_state.results)}")
-    st.caption("🚀 SEO Monitor v1.0 | Made with Streamlit")
