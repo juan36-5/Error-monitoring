@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEO Monitor Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 SEO Monitor Dashboard</h1>
+            <div class="header-actions">
+                <button onclick="triggerScan()" class="btn-primary">🔄 Scan All Sites</button>
+            </div>
+        </header>
+
+        <!-- Summary Cards -->
+        <div class="summary-cards" id="summaryCards">
+            <div class="card">
+                <h3>Total Sites</h3>
+                <p class="number" id="totalSites">0</p>
+            </div>
+            <div class="card">
+                <h3>Sites with Issues</h3>
+                <p class="number" id="sitesWithErrors">0</p>
+            </div>
+            <div class="card">
+                <h3>Average SEO Score</h3>
+                <p class="number" id="avgScore">0</p>
+            </div>
+            <div class="card">
+                <h3>Recent Scans (24h)</h3>
+                <p class="number" id="recentScans">0</p>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-row">
+            <div class="chart-container">
+                <h2>SEO Trend (Last 30 Days)</h2>
+                <canvas id="trendChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h2>Error Type Distribution</h2>
+                <canvas id="errorTypeChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Sites Table -->
+        <div class="sites-section">
+            <h2>Monitored Sites</h2>
+            <div class="table-controls">
+                <input type="text" id="searchInput" placeholder="Search sites..." onkeyup="filterSites()">
+                <select id="filterStatus" onchange="filterSites()">
+                    <option value="all">All Sites</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="errors">With Errors</option>
+                </select>
+                <button onclick="addSite()" class="btn-primary">+ Add Site</button>
+            </div>
+            <div id="sitesTable">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Site</th>
+                            <th>Status</th>
+                            <th>SEO Score</th>
+                            <th>Errors</th>
+                            <th>Last Scan</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sitesList">
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <!-- Add Site Modal -->
+    <div id="addSiteModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2>Add New Site</h2>
+            <form id="addSiteForm" onsubmit="submitSite(event)">
+                <div class="form-group">
+                    <label>Website URL</label>
+                    <input type="url" id="siteUrl" placeholder="https://example.com" required>
+                </div>
+                <div class="form-group">
+                    <label>Name (optional)</label>
+                    <input type="text" id="siteName" placeholder="My Website">
+                </div>
+                <div class="form-group">
+                    <label>Scan Frequency</label>
+                    <select id="scanFrequency">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary">Add Site</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>
