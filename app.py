@@ -6,6 +6,8 @@ from datetime import datetime
 import re
 import os
 import time
+import io
+import base64
 
 # ============ PAGE CONFIG - MUST BE FIRST ============
 st.set_page_config(
@@ -14,10 +16,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ============ CLEAR SESSION ON STARTUP ============
-# Remove this line after first run if you want to keep data
-# st.session_state.clear()
-
 # ============ SESSION STATE ============
 if 'sites' not in st.session_state:
     st.session_state.sites = []
@@ -25,6 +23,8 @@ if 'results' not in st.session_state:
     st.session_state.results = {}
 if 'scanning' not in st.session_state:
     st.session_state.scanning = False
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 1
 
 # ============ SEO CHECKER FUNCTION ============
 def check_seo(url):
@@ -43,7 +43,9 @@ def check_seo(url):
         'images_with_alt': 0,
         'last_check': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'status_code': None,
-        'response_time': None
+        'response_time': None,
+        'internal_links': 0,
+        'external_links': 0
     }
     
     try:
@@ -148,10 +150,28 @@ def check_seo(url):
         
         # ====== CHECK LINKS ======
         links = soup.find_all('a', href=True)
+        internal_links = 0
+        external_links = 0
+        
+        for link in links:
+            href = link['href']
+            if href.startswith('http'):
+                if urlparse(href).netloc == urlparse(url).netloc:
+                    internal_links += 1
+                else:
+                    external_links += 1
+            elif href.startswith('/') or href.startswith('#'):
+                internal_links += 1
+        
+        result['internal_links'] = internal_links
+        result['external_links'] = external_links
+        
         if links:
             result['score'] += 5
+            
+            # Check for broken links (sample)
             broken_links = 0
-            for link in links[:3]:  # Check first 3 links only to avoid timeout
+            for link in links[:3]:
                 href = link['href']
                 if href.startswith('http'):
                     try:
@@ -184,6 +204,20 @@ def check_seo(url):
         canonical = soup.find('link', attrs={'rel': 'canonical'})
         if not canonical:
             result['error_details'].append("⚠️ No canonical tag found")
+            result['errors'] += 1
+        
+        # ====== CHECK ROBOTS META ======
+        robots = soup.find('meta', attrs={'name': 'robots'})
+        if robots:
+            robots_content = robots.get('content', '').lower()
+            if 'noindex' in robots_content:
+                result['error_details'].append("⚠️ Page is marked noindex")
+                result['errors'] += 1
+            if 'nofollow' in robots_content:
+                result['error_details'].append("⚠️ Page is marked nofollow")
+                result['errors'] += 1
+        else:
+            result['error_details'].append("⚠️ No robots meta tag found")
             result['errors'] += 1
         
         # Calculate final score
@@ -251,11 +285,41 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # Upload sites file
+    st.subheader("📤 Upload Sites File")
+    uploaded_file = st.file_uploader(
+        "Upload sites.txt or .csv",
+        type=['txt', 'csv'],
+        help="Upload a file with one URL per line"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            content = uploaded_file.read().decode('utf-8')
+            urls = [line.strip() for line in content.split('\n') if line.strip()]
+            added = 0
+            for url in urls:
+                if not url.startswith('http'):
+                    url = 'https://' + url
+                if url not in st.session_state.sites and not url.startswith('import'):
+                    st.session_state.sites.append(url)
+                    added += 1
+            if added > 0:
+                st.success(f"✅ Added {added} sites!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error reading file: {str(e)}")
+    
+    st.markdown("---")
+    
     # Clear All button
     if st.button("🧹 Clear All Sites", use_container_width=True):
         st.session_state.sites = []
         st.session_state.results = {}
         st.rerun()
+    
+    st.markdown("---")
+    st.caption("💡 Tip: Add sites.txt to your project folder for auto-import")
 
 # ============ MAIN TABS ============
 tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 SEO Checker", "📈 Reports"])
@@ -282,11 +346,33 @@ with tab1:
     with col4:
         st.metric("📊 Avg SEO Score", f"{avg_score:.1f}/100")
     
-    # Site list
+    # Site list with pagination
     st.subheader("📋 Monitored Sites")
     if st.session_state.sites:
+        # Pagination
+        sites_per_page = 20
+        total_pages = (len(st.session_state.sites) - 1) // sites_per_page + 1
+        
+        if st.session_state.current_page > total_pages:
+            st.session_state.current_page = 1
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("◀ Previous", disabled=(st.session_state.current_page <= 1)):
+                st.session_state.current_page -= 1
+                st.rerun()
+        with col2:
+            st.write(f"Page {st.session_state.current_page} of {total_pages}")
+        with col3:
+            if st.button("Next ▶", disabled=(st.session_state.current_page >= total_pages)):
+                st.session_state.current_page += 1
+                st.rerun()
+        
+        start_idx = (st.session_state.current_page - 1) * sites_per_page
+        end_idx = min(start_idx + sites_per_page, len(st.session_state.sites))
+        
         df_data = []
-        for site in st.session_state.sites[:50]:
+        for site in st.session_state.sites[start_idx:end_idx]:
             status = "✅ Active"
             if site in st.session_state.results:
                 result = st.session_state.results[site]
@@ -379,8 +465,17 @@ with tab2:
         
         # Show detailed view for each site
         st.subheader("🔍 Detailed View by Site")
-        for url, result in list(st.session_state.results.items())[:10]:
-            with st.expander(f"🔍 {url.replace('https://', '')}", expanded=False):
+        
+        # Create a selectbox to choose which site to view
+        site_options = [url.replace('https://', '') for url in st.session_state.results.keys()]
+        selected_site = st.selectbox("Select a site to view details:", site_options)
+        
+        if selected_site:
+            # Find the full URL
+            full_url = 'https://' + selected_site
+            if full_url in st.session_state.results:
+                result = st.session_state.results[full_url]
+                
                 col1, col2 = st.columns([2, 1])
                 with col1:
                     st.write(f"**Score:** {result.get('score', 0)}/100")
@@ -397,6 +492,8 @@ with tab2:
                     
                     st.write(f"**Word Count:** {result.get('word_count', 0)}")
                     st.write(f"**H1 Heading:** {result.get('h1', '❌ Missing')}")
+                    st.write(f"**Internal Links:** {result.get('internal_links', 0)}")
+                    st.write(f"**External Links:** {result.get('external_links', 0)}")
                     st.write(f"**Status Code:** {result.get('status_code', 'N/A')}")
                     st.write(f"**Response Time:** {result.get('response_time', 0)}s")
                 
@@ -407,15 +504,29 @@ with tab2:
                         st.success("✅ No issues found")
                     
                     st.write(f"**Images:** {result.get('images_with_alt', 0)}/{result.get('total_images', 0)} have alt text")
+                    
+                    # Rating
+                    score = result.get('score', 0)
+                    if score >= 90:
+                        st.success("🌟 Excellent SEO")
+                    elif score >= 70:
+                        st.info("👍 Good SEO")
+                    elif score >= 50:
+                        st.warning("⚠️ Needs Improvement")
+                    else:
+                        st.error("❌ Poor SEO")
                 
                 if result.get('error_details'):
                     st.write("**Issues Found:**")
                     for detail in result.get('error_details', []):
                         st.warning(f"• {detail}")
+            else:
+                st.warning("Site not found in results")
 
 with tab3:
     st.header("📈 SEO Reports")
     if st.session_state.results:
+        # Create dataframe
         data = []
         for url, result in st.session_state.results.items():
             desc = result.get('description')
@@ -427,7 +538,8 @@ with tab3:
                 'Description Length': result.get('description_length', 0),
                 'H1 Tag': '✅' if result.get('h1') else '❌',
                 'Word Count': result.get('word_count', 0),
-                'Issues': result.get('errors', 0)
+                'Issues': result.get('errors', 0),
+                'Issues Details': '; '.join(result.get('error_details', []))[:200] if result.get('error_details') else 'None'
             })
         
         df = pd.DataFrame(data)
@@ -448,16 +560,81 @@ with tab3:
             perfect = len(df[df['Issues'] == 0])
             st.metric("Perfect Sites", perfect)
         
-        # Export
-        st.subheader("📥 Export Data")
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Full Report as CSV",
-            data=csv,
-            file_name=f"seo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        # ====== DOWNLOAD SECTION ======
+        st.subheader("📥 Export Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # Option 1: Download CSV
+        with col1:
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download CSV",
+                data=csv,
+                file_name=f"seo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            st.caption("💾 Downloads to your browser")
+        
+        # Option 2: Download Excel
+        with col2:
+            try:
+                # Create Excel file in memory
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, sheet_name='SEO Report', index=False)
+                excel_data = output.getvalue()
+                
+                st.download_button(
+                    label="📊 Download Excel",
+                    data=excel_data,
+                    file_name=f"seo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                st.caption("💾 Downloads to your browser")
+            except:
+                st.button("📊 Excel Export", disabled=True, use_container_width=True)
+                st.caption("⚠️ Install openpyxl for Excel export")
+        
+        # Option 3: Save to Server
+        with col3:
+            if st.button("💾 Save to Server", use_container_width=True):
+                try:
+                    # Create reports folder
+                    os.makedirs('reports', exist_ok=True)
+                    filename = f"reports/seo_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                    df.to_csv(filename, index=False)
+                    st.success(f"✅ Saved: {filename}")
+                except Exception as e:
+                    st.error(f"Error saving: {str(e)}")
+            st.caption("💾 Saves to server folder")
+        
+        # Show saved files
+        if os.path.exists('reports'):
+            st.subheader("📁 Saved Reports on Server")
+            files = os.listdir('reports')
+            if files:
+                for f in sorted(files, reverse=True)[:10]:
+                    file_size = os.path.getsize(f"reports/{f}")
+                    size_kb = file_size / 1024
+                    st.write(f"   📄 {f} ({size_kb:.1f} KB)")
+                
+                # Download saved file
+                if files:
+                    latest_file = sorted(files, reverse=True)[0]
+                    with open(f"reports/{latest_file}", 'r') as f:
+                        csv_data = f.read()
+                    st.download_button(
+                        label=f"📥 Download Latest: {latest_file}",
+                        data=csv_data,
+                        file_name=latest_file,
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+            else:
+                st.write("No saved reports yet")
         
         # Worst performers
         st.subheader("⚠️ Sites Needing Attention")
@@ -466,6 +643,14 @@ with tab3:
             st.dataframe(worst_sites[['Site', 'Score', 'Issues']], use_container_width=True)
         else:
             st.success("🎉 No sites with issues found!")
+        
+        # Best performers
+        st.subheader("🌟 Top Performing Sites")
+        best_sites = df[df['Issues'] == 0].head(10)
+        if not best_sites.empty:
+            st.dataframe(best_sites[['Site', 'Score']], use_container_width=True)
+        else:
+            st.info("No perfect sites yet. Keep improving!")
     else:
         st.info("Run a scan first to generate reports")
 
@@ -476,3 +661,6 @@ with col2:
     st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     st.caption(f"📊 Total Sites: {len(st.session_state.sites)} | Checked: {len(st.session_state.results)}")
     st.caption("🚀 SEO Monitor v1.0 | Made with Streamlit")
+
+# ============ HELPER FUNCTION FOR URLPARSER ============
+from urllib.parse import urlparse
