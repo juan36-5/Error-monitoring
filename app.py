@@ -10,21 +10,36 @@ import io
 from urllib.parse import urlparse, urljoin
 import json
 from collections import Counter
+import random
 import base64
 
-# ============ TRY TO USE SELENIUM ============
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from webdriver_manager.chrome import ChromeDriverManager
-    SELENIUM_AVAILABLE = True
-except ImportError:
-    SELENIUM_AVAILABLE = False
-    st.warning("⚠️ Selenium not installed. Install with: pip install selenium webdriver-manager")
+# ============ USER AGENT ROTATION ============
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+]
+
+def get_random_headers():
+    """Get random headers to avoid blocking"""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'DNT': '1'
+    }
 
 # ============ PAGE CONFIG ============
 st.set_page_config(
@@ -42,87 +57,54 @@ if 'scanning' not in st.session_state:
     st.session_state.scanning = False
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 1
+if 'selected_site' not in st.session_state:
+    st.session_state.selected_site = None
 
 # ============ FUNCTION TO GET FULL PAGE CONTENT ============
-def get_full_page_content(url, use_selenium=True):
-    """Get page content using Selenium for JavaScript rendering"""
+def get_full_page_content(url):
+    """Get page content with better headers and retry logic"""
     
-    # First try with regular requests
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        
-        if response.status_code == 200 and 'text/html' in response.headers.get('content-type', ''):
-            # If it's HTML, check if it has JavaScript content
-            if '<script' in response.text:
-                # Try Selenium if available
-                if SELENIUM_AVAILABLE and use_selenium:
-                    try:
-                        return get_page_with_selenium(url)
-                    except:
-                        return response.text
-            return response.text
-        return response.text
-    except:
-        # Fallback to Selenium if requests fails
-        if SELENIUM_AVAILABLE:
-            try:
-                return get_page_with_selenium(url)
-            except:
-                return ""
-        return ""
-
-def get_page_with_selenium(url):
-    """Get page content using Selenium (renders JavaScript)"""
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
-    options.add_experimental_option('useAutomationExtension', False)
+    # Try with rotating user agents
+    for attempt in range(3):
+        try:
+            headers = get_random_headers()
+            
+            # Add delay between attempts
+            time.sleep(random.uniform(1, 3))
+            
+            response = requests.get(
+                url, 
+                timeout=15, 
+                headers=headers,
+                allow_redirects=True,
+                verify=True
+            )
+            
+            if response.status_code == 200:
+                return response.text, response.status_code
+            
+            elif response.status_code == 403:
+                # Try with a different approach
+                headers = get_random_headers()
+                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                response = requests.get(url, timeout=15, headers=headers)
+                if response.status_code == 200:
+                    return response.text, response.status_code
+                continue
+                
+            else:
+                return response.text, response.status_code
+                
+        except Exception as e:
+            if attempt == 2:
+                return "", 0
+            continue
     
-    try:
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=options
-        )
-        
-        driver.get(url)
-        
-        # Wait for page to load
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
-        
-        # Scroll to load lazy content (multiple times)
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        for i in range(5):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
-        
-        # Scroll back to top
-        driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
-        
-        # Get page source
-        html = driver.page_source
-        driver.quit()
-        return html
-        
-    except Exception as e:
-        return ""
+    return "", 0
 
 # ============ COMPLETE SEO CHECKER ============
 def check_seo_complete(url):
-    """Complete SEO check with accurate content analysis"""
+    """Complete SEO check with better handling"""
     result = {
         'url': url,
         'score': 0,
@@ -139,35 +121,27 @@ def check_seo_complete(url):
         'meta_description_length': 0,
         'meta_keywords': None,
         'meta_robots': None,
-        'meta_viewport': None,
+        'has_viewport': False,
+        'has_https': False,
+        'has_canonical': False,
         'canonical_url': None,
-        'charset': None,
-        'language': None,
-        
-        # ===== OPEN GRAPH / SOCIAL =====
-        'og_title': None,
-        'og_description': None,
-        'og_image': None,
-        'twitter_card': None,
+        'status_code': None,
+        'response_time': 0,
+        'page_size': 0,
         
         # ===== HEADINGS =====
-        'h1': None,
         'h1_count': 0,
         'h2_count': 0,
         'h3_count': 0,
         'h4_count': 0,
         'h5_count': 0,
         'h6_count': 0,
-        'heading_structure': [],
         
-        # ===== ACCURATE CONTENT ANALYSIS =====
+        # ===== CONTENT =====
         'total_words': 0,
-        'visible_words': 0,
-        'paragraph_words': 0,
         'paragraph_count': 0,
-        'avg_words_per_paragraph': 0,
         'sentence_count': 0,
-        'avg_sentence_words': 0,
+        'avg_words_per_sentence': 0,
         'top_keywords': [],
         'keyword_density': {},
         
@@ -183,24 +157,22 @@ def check_seo_complete(url):
         'images_with_alt': 0,
         'images_without_alt': 0,
         
-        # ===== TECHNICAL =====
-        'status_code': None,
-        'response_time': 0,
-        'page_size': 0,
-        'has_https': False,
-        'has_viewport': False,
-        'has_canonical': False,
+        # ===== SCHEMA =====
         'has_schema': False,
+        'schema_types': [],
+        
+        # ===== TECHNICAL =====
         'has_robots_txt': False,
         'has_sitemap_xml': False,
         'has_favicon': False,
-        'schema_types': [],
-        
-        # ===== PERFORMANCE =====
-        'load_time': 0,
         'css_files': 0,
         'js_files': 0,
-        'total_resources': 0
+        
+        # ===== SOCIAL =====
+        'og_title': None,
+        'og_description': None,
+        'og_image': None,
+        'twitter_card': None
     }
     
     try:
@@ -210,11 +182,12 @@ def check_seo_complete(url):
         if not url.startswith('http'):
             url = 'https://' + url
         
-        # Get full page content
-        html_content = get_full_page_content(url)
+        # Get page content
+        html_content, status_code = get_full_page_content(url)
+        result['status_code'] = status_code
         
-        if not html_content:
-            result['error_details'].append("❌ Failed to load page content")
+        if not html_content or status_code == 403:
+            result['error_details'].append(f"❌ Failed to load page - Status: {status_code}")
             result['errors'] += 1
             return result
         
@@ -243,7 +216,7 @@ def check_seo_complete(url):
                 result['warning_details'].append(f"⚠️ Title too long: {result['title_length']} chars (> 60)")
                 result['warnings'] += 1
             else:
-                result['success_details'].append(f"✅ Title length is optimal: {result['title_length']} chars")
+                result['success_details'].append(f"✅ Title length optimal: {result['title_length']} chars")
         else:
             result['error_details'].append("❌ Missing title tag")
             result['errors'] += 1
@@ -264,7 +237,7 @@ def check_seo_complete(url):
                     result['warning_details'].append(f"⚠️ Description too long: {len(desc_content)} chars (> 160)")
                     result['warnings'] += 1
                 else:
-                    result['success_details'].append(f"✅ Description length is optimal: {len(desc_content)} chars")
+                    result['success_details'].append(f"✅ Description length optimal: {len(desc_content)} chars")
             else:
                 result['warning_details'].append("⚠️ Description is empty")
                 result['warnings'] += 1
@@ -300,18 +273,6 @@ def check_seo_complete(url):
         else:
             result['error_details'].append("❌ Missing viewport meta tag (not mobile friendly)")
             result['errors'] += 1
-        
-        # Charset
-        charset = soup.find('meta', attrs={'charset': True})
-        if charset:
-            result['charset'] = charset.get('charset', '')
-            result['success_details'].append("✅ Charset meta tag found")
-        
-        # Language
-        html_tag = soup.find('html')
-        if html_tag and html_tag.get('lang'):
-            result['language'] = html_tag.get('lang')
-            result['success_details'].append(f"✅ Language attribute found: {result['language']}")
         
         # Canonical
         canonical = soup.find('link', attrs={'rel': 'canonical'})
@@ -357,58 +318,6 @@ def check_seo_complete(url):
             result['warnings'] += 1
         
         # ============================================
-        # ACCURATE WORD COUNT
-        # ============================================
-        
-        # Get ALL text (including what's in script tags if it's content)
-        all_text = soup.get_text(separator=' ', strip=True)
-        
-        # Extract words using regex
-        words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', all_text)
-        result['total_words'] = len(words)
-        result['visible_words'] = len(words)
-        
-        # Get paragraphs
-        paragraphs = soup.find_all('p')
-        result['paragraph_count'] = len(paragraphs)
-        
-        paragraph_text = ' '.join([p.text.strip() for p in paragraphs if p.text.strip()])
-        paragraph_words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', paragraph_text)
-        result['paragraph_words'] = len(paragraph_words)
-        
-        if paragraphs and result['paragraph_count'] > 0:
-            result['avg_words_per_paragraph'] = result['paragraph_words'] // result['paragraph_count']
-        
-        # Sentences
-        sentences = re.split(r'[.!?]+', all_text)
-        result['sentence_count'] = len([s for s in sentences if len(s.strip()) > 10])
-        
-        if result['sentence_count'] > 0:
-            result['avg_sentence_words'] = result['total_words'] // result['sentence_count']
-        
-        # Top keywords (excluding common words)
-        stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go', 'me'}
-        content_words = [w.lower() for w in words if w.lower() not in stop_words and len(w) > 3]
-        
-        if content_words:
-            word_freq = Counter(content_words)
-            result['top_keywords'] = word_freq.most_common(10)
-            result['keyword_density'] = dict(word_freq.most_common(10))
-        
-        # Content quality scoring
-        if result['total_words'] < 100:
-            result['error_details'].append(f"❌ Very low word count: {result['total_words']} words on homepage")
-            result['errors'] += 1
-        elif result['total_words'] < 300:
-            result['warning_details'].append(f"⚠️ Low word count: {result['total_words']} words on homepage (< 300 recommended)")
-            result['warnings'] += 1
-        elif result['total_words'] < 500:
-            result['warning_details'].append(f"⚠️ Medium word count: {result['total_words']} words (500+ recommended)")
-            result['warnings'] += 1
-        else:
-            result['success_details'].append(f"✅ Good word count: {result['total_words']} words on homepage")
-        
-        # ============================================
         # HEADINGS
         # ============================================
         
@@ -419,7 +328,6 @@ def check_seo_complete(url):
             result['error_details'].append("❌ No H1 heading found")
             result['errors'] += 1
         elif result['h1_count'] == 1:
-            result['h1'] = h1_tags[0].text.strip() if h1_tags else None
             result['success_details'].append("✅ Exactly one H1 heading")
         else:
             result['warning_details'].append(f"⚠️ Multiple H1 tags: {result['h1_count']}")
@@ -440,12 +348,53 @@ def check_seo_complete(url):
         h6_tags = soup.find_all('h6')
         result['h6_count'] = len(h6_tags)
         
-        # Heading structure validation
-        if result['h1_count'] == 1 and result['h2_count'] > 0:
-            result['success_details'].append("✅ Good heading structure (H1 followed by H2s)")
-        elif result['h1_count'] == 1 and result['h2_count'] == 0:
-            result['warning_details'].append("⚠️ H1 found but no H2 headings")
+        # ============================================
+        # ACCURATE WORD COUNT
+        # ============================================
+        
+        # Remove script and style tags for accurate content
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Get all visible text
+        all_text = soup.get_text(separator=' ', strip=True)
+        
+        # Extract words
+        words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', all_text)
+        result['total_words'] = len(words)
+        
+        # Paragraphs
+        paragraphs = soup.find_all('p')
+        result['paragraph_count'] = len(paragraphs)
+        
+        # Sentences
+        sentences = re.split(r'[.!?]+', all_text)
+        result['sentence_count'] = len([s for s in sentences if len(s.strip()) > 10])
+        
+        if result['sentence_count'] > 0:
+            result['avg_words_per_sentence'] = result['total_words'] // result['sentence_count']
+        
+        # Top keywords
+        stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go', 'me'}
+        content_words = [w.lower() for w in words if w.lower() not in stop_words and len(w) > 3]
+        
+        if content_words:
+            word_freq = Counter(content_words)
+            result['top_keywords'] = word_freq.most_common(10)
+            result['keyword_density'] = dict(word_freq.most_common(10))
+        
+        # Content quality scoring
+        if result['total_words'] < 100:
+            result['error_details'].append(f"❌ Very low word count: {result['total_words']} words on homepage")
+            result['errors'] += 1
+        elif result['total_words'] < 300:
+            result['warning_details'].append(f"⚠️ Low word count: {result['total_words']} words (< 300 recommended)")
             result['warnings'] += 1
+        elif result['total_words'] < 500:
+            result['warning_details'].append(f"⚠️ Medium word count: {result['total_words']} words (500+ recommended)")
+            result['warnings'] += 1
+        else:
+            result['success_details'].append(f"✅ Good word count: {result['total_words']} words")
         
         # ============================================
         # LINKS
@@ -586,27 +535,11 @@ def check_seo_complete(url):
             result['warning_details'].append("⚠️ No favicon found")
             result['warnings'] += 1
         
-        # ============================================
-        # PERFORMANCE
-        # ============================================
-        
-        result['load_time'] = result['response_time']
-        
         # Count resources
         css_files = soup.find_all('link', rel='stylesheet')
         js_files = soup.find_all('script', src=True)
         result['css_files'] = len(css_files)
         result['js_files'] = len(js_files)
-        result['total_resources'] = len(css_files) + len(js_files) + result['total_images']
-        
-        if result['response_time'] > 3:
-            result['warning_details'].append(f"⚠️ Slow load time: {result['response_time']}s")
-            result['warnings'] += 1
-        elif result['response_time'] > 1:
-            result['warning_details'].append(f"⚠️ Load time could be faster: {result['response_time']}s")
-            result['warnings'] += 1
-        else:
-            result['success_details'].append(f"✅ Fast load time: {result['response_time']}s")
         
         # ============================================
         # CALCULATE FINAL SCORE
@@ -644,39 +577,11 @@ def check_seo_complete(url):
         
         result['score'] = max(0, min(100, score))
         
-    except requests.exceptions.Timeout:
-        result['error_details'].append("❌ Timeout - Page took too long to load")
-        result['errors'] += 1
-    except requests.exceptions.ConnectionError:
-        result['error_details'].append("❌ Connection error - Cannot reach the site")
-        result['errors'] += 1
     except Exception as e:
         result['error_details'].append(f"❌ Error: {str(e)}")
         result['errors'] += 1
     
     return result
-
-# ============ AUTO-IMPORT SITES ============
-def auto_import_sites():
-    """Automatically import sites from sites.txt on app start"""
-    if os.path.exists('sites.txt') and not st.session_state.sites:
-        try:
-            with open('sites.txt', 'r') as f:
-                for line in f:
-                    url = line.strip()
-                    if url and not url.startswith('#'):
-                        if url.startswith('import') or url.startswith('from') or url.startswith('def'):
-                            continue
-                        if not url.startswith('http'):
-                            url = 'https://' + url
-                        if url not in st.session_state.sites:
-                            st.session_state.sites.append(url)
-            if st.session_state.sites:
-                st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
-        except Exception as e:
-            st.error(f"Error importing sites: {str(e)}")
-
-auto_import_sites()
 
 # ============ DISPLAY SEO RESULT FUNCTION ============
 def display_seo_result(url, result, expanded=False):
@@ -772,7 +677,7 @@ def display_seo_result(url, result, expanded=False):
         with c_col3:
             st.metric("Sentences", result.get('sentence_count', 0))
         with c_col4:
-            st.metric("Avg Words/Sentence", result.get('avg_sentence_words', 0))
+            st.metric("Avg Words/Sentence", result.get('avg_words_per_sentence', 0))
         
         # Top keywords
         if result.get('top_keywords'):
@@ -863,12 +768,31 @@ def display_seo_result(url, result, expanded=False):
             for detail in result['error_details']:
                 st.error(detail)
 
-# ============ TITLE ============
+# ============ AUTO-IMPORT SITES ============
+def auto_import_sites():
+    if os.path.exists('sites.txt') and not st.session_state.sites:
+        try:
+            with open('sites.txt', 'r') as f:
+                for line in f:
+                    url = line.strip()
+                    if url and not url.startswith('#') and not url.startswith('import'):
+                        if not url.startswith('http'):
+                            url = 'https://' + url
+                        if url not in st.session_state.sites:
+                            st.session_state.sites.append(url)
+            if st.session_state.sites:
+                st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
+        except Exception as e:
+            st.error(f"Error importing sites: {str(e)}")
+
+# ============ MAIN APP ============
+auto_import_sites()
+
 st.title("🔍 Complete SEO Monitor")
 st.markdown("**Analyze 100+ SEO metrics for your websites**")
 st.markdown("---")
 
-# ============ SIDEBAR ============
+# Sidebar
 with st.sidebar:
     st.header("📋 Site Management")
     st.metric("Total Sites", len(st.session_state.sites))
@@ -885,8 +809,6 @@ with st.sidebar:
                 st.session_state.sites.append(new_url)
                 st.success(f"✅ Added {new_url}")
                 st.rerun()
-            else:
-                st.warning("⚠️ Site already exists")
     
     st.markdown("---")
     
@@ -929,13 +851,8 @@ with st.sidebar:
     st.caption("• Technical SEO (SSL, Robots, Sitemap)")
     st.caption("• Performance (Load time, Resources)")
 
-# ============ MAIN TABS ============
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Dashboard",
-    "🔍 SEO Analysis",
-    "📈 Reports",
-    "📋 All Metrics"
-])
+# Tabs
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 SEO Analysis", "📈 Reports"])
 
 with tab1:
     # Summary cards
@@ -985,22 +902,21 @@ with tab1:
         
         df_data = []
         for site in st.session_state.sites[start_idx:end_idx]:
-            status = "✅ Active"
             if site in st.session_state.results:
                 result = st.session_state.results[site]
-                if result.get('errors', 0) > 0:
-                    status = "⚠️ Has Issues"
-                last_check = result.get('last_check', 'Never')
+                status = "⚠️ Has Issues" if result.get('errors', 0) > 0 else "✅ Good"
                 score = result.get('score', '-')
+                last_check = result.get('last_check', 'Never')
             else:
-                last_check = 'Never'
+                status = "⏳ Pending"
                 score = '-'
+                last_check = 'Never'
             
             df_data.append({
                 'Site': site.replace('https://', ''),
                 'Status': status,
-                'Last Check': last_check,
-                'Score': score
+                'Score': score,
+                'Last Check': last_check
             })
         
         df = pd.DataFrame(df_data)
@@ -1062,13 +978,11 @@ with tab2:
                 'Score': result.get('score', 0),
                 'Errors': result.get('errors', 0),
                 'Warnings': result.get('warnings', 0),
-                'Title': result.get('title', 'Missing'),
+                'Title': result.get('title', 'Missing')[:50],
                 'Description': result.get('meta_description', 'Missing')[:50] + '...' if result.get('meta_description') else 'Missing',
                 'Total Words': result.get('total_words', 0),
                 'Internal Links': result.get('internal_links', 0),
-                'External Links': result.get('external_links', 0),
-                'Schema': '✅' if result.get('has_schema') else '❌',
-                'Mobile': '✅' if result.get('has_viewport') else '❌'
+                'External Links': result.get('external_links', 0)
             })
         
         df_summary = pd.DataFrame(summary_data)
@@ -1095,7 +1009,6 @@ with tab3:
                 'Title Length': result.get('title_length', 0),
                 'Description': result.get('meta_description', 'Missing')[:100] + '...' if result.get('meta_description') else 'Missing',
                 'Description Length': result.get('meta_description_length', 0),
-                'H1': result.get('h1', 'Missing'),
                 'H1 Count': result.get('h1_count', 0),
                 'H2 Count': result.get('h2_count', 0),
                 'H3 Count': result.get('h3_count', 0),
@@ -1170,6 +1083,7 @@ with tab3:
                 st.caption("💾 Downloads to your browser")
             except:
                 st.button("📊 Excel Export", disabled=True, use_container_width=True)
+                st.caption("⚠️ Install openpyxl for Excel export")
         
         with col3:
             if st.button("💾 Save to Server", use_container_width=True):
@@ -1180,6 +1094,7 @@ with tab3:
                     st.success(f"✅ Saved: {filename}")
                 except Exception as e:
                     st.error(f"Error saving: {str(e)}")
+            st.caption("💾 Saves to server folder")
         
         # Show saved files
         if os.path.exists('reports'):
@@ -1189,6 +1104,19 @@ with tab3:
                 for f in sorted(files, reverse=True)[:10]:
                     size = os.path.getsize(f"reports/{f}") / 1024
                     st.write(f"   📄 {f} ({size:.1f} KB)")
+                
+                # Download saved file
+                if files:
+                    latest_file = sorted(files, reverse=True)[0]
+                    with open(f"reports/{latest_file}", 'r') as f:
+                        csv_data = f.read()
+                    st.download_button(
+                        label=f"📥 Download Latest: {latest_file}",
+                        data=csv_data,
+                        file_name=latest_file,
+                        mime="text/csv",
+                        use_container_width=True
+                    )
         
         # ===== SITE RANKINGS =====
         st.subheader("🏆 Site Rankings")
@@ -1222,66 +1150,6 @@ with tab3:
         
     else:
         st.info("Run an SEO analysis first to generate reports")
-
-with tab4:
-    st.header("📋 Complete SEO Metrics Explained")
-    
-    st.markdown("""
-    ### 🔍 What This Tool Checks
-    
-    #### 1. Meta Tags
-    - **Title Tag**: Presence, length (optimal 30-60 chars)
-    - **Meta Description**: Presence, length (optimal 50-160 chars)
-    - **Meta Keywords**: Presence and content
-    - **Meta Robots**: Check for noindex, nofollow
-    - **Viewport**: Mobile responsiveness
-    - **Charset**: Proper character encoding
-    - **Language**: HTML language attribute
-    
-    #### 2. Headings Structure
-    - **H1**: Presence, count (should have exactly one)
-    - **H2-H6**: Count and hierarchy
-    
-    #### 3. Content Analysis
-    - **Word Count**: Total words on page (300+ recommended)
-    - **Paragraph Count**: Number of paragraphs
-    - **Readability**: Words per sentence (15-20 recommended)
-    - **Keyword Density**: Most common keywords
-    
-    #### 4. Link Analysis
-    - **Internal Links**: Links to your own site
-    - **External Links**: Links to other sites
-    - **Nofollow Links**: Links with nofollow attribute
-    - **Broken Links**: 404s and errors
-    
-    #### 5. Images
-    - **Alt Text**: Missing alt attributes
-    - **Image Count**: Total images on page
-    
-    #### 6. Schema Markup
-    - **JSON-LD**: Structured data presence
-    - **Schema Types**: Organization, Product, Article, FAQ, LocalBusiness
-    
-    #### 7. Social Media Tags
-    - **Open Graph**: og:title, og:description, og:image
-    - **Twitter Cards**: twitter:card, twitter:title
-    
-    #### 8. Technical SEO
-    - **Canonical URL**: Duplicate content prevention
-    - **Robots.txt**: Proper configuration
-    - **Sitemap.xml**: XML sitemap presence
-    - **Favicon**: Favicon presence
-    - **SSL/HTTPS**: Security certificate
-    
-    #### 9. Performance
-    - **Load Time**: Page speed (ideal < 2s)
-    - **Resources**: CSS, JS, image count
-    
-    #### 10. Accessibility
-    - **Alt Text**: Image descriptions
-    - **ARIA Labels**: Accessibility attributes
-    - **Heading Structure**: Screen reader friendly
-    """)
 
 # ============ FOOTER ============
 st.markdown("---")
