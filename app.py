@@ -4,205 +4,9 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
 import re
-import urllib.parse
+import os
 
-# Page config
-st.set_page_config(
-    page_title="SEO Monitor",
-    page_icon="🔍",
-    layout="wide"
-)
-
-# Title
-st.title("🔍 SEO Monitor Dashboard")
-st.markdown("---")
-
-# Initialize session state
-if 'sites' not in st.session_state:
-    st.session_state.sites = []
-if 'results' not in st.session_state:
-    st.session_state.results = {}
-
-# Sidebar
-with st.sidebar:
-    st.header("📋 Add New Site")
-    new_url = st.text_input("Website URL", placeholder="https://example.com")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("➕ Add Site", use_container_width=True):
-            if new_url and new_url not in st.session_state.sites:
-                # Clean URL
-                if not new_url.startswith('http'):
-                    new_url = 'https://' + new_url
-                st.session_state.sites.append(new_url)
-                st.success(f"Added {new_url}")
-                st.rerun()
-    with col2:
-        if st.button("🗑️ Clear All", use_container_width=True):
-            st.session_state.sites = []
-            st.session_state.results = {}
-            st.rerun()
-    
-    st.markdown("---")
-    st.caption(f"📊 Total Sites: {len(st.session_state.sites)}")
-    
-    # Export option
-    if st.session_state.results:
-        st.download_button(
-            label="📥 Export Report",
-            data=create_csv_report(st.session_state.results),
-            file_name=f"seo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-
-# Main tabs
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 SEO Checker", "📈 Reports"])
-
-with tab1:
-    # Summary cards
-    col1, col2, col3, col4 = st.columns(4)
-    
-    total_sites = len(st.session_state.sites)
-    checked_sites = len(st.session_state.results)
-    sites_with_errors = sum(1 for r in st.session_state.results.values() if r.get('errors', 0) > 0)
-    
-    avg_score = 0
-    if st.session_state.results:
-        scores = [r.get('score', 0) for r in st.session_state.results.values()]
-        avg_score = sum(scores) / len(scores)
-    
-    with col1:
-        st.metric("📋 Total Sites", total_sites)
-    with col2:
-        st.metric("✅ Checked", checked_sites)
-    with col3:
-        st.metric("⚠️ Issues Found", sites_with_errors)
-    with col4:
-        st.metric("📊 Avg SEO Score", f"{avg_score:.1f}/100")
-    
-    # Site list
-    st.subheader("📋 Monitored Sites")
-    if st.session_state.sites:
-        df_data = []
-        for site in st.session_state.sites:
-            status = "✅ Active"
-            if site in st.session_state.results:
-                result = st.session_state.results[site]
-                if result.get('errors', 0) > 0:
-                    status = "⚠️ Has Issues"
-                last_check = result.get('last_check', 'Never')
-            else:
-                last_check = 'Never'
-            
-            df_data.append({
-                'Site': site,
-                'Status': status,
-                'Last Check': last_check,
-                'Score': st.session_state.results.get(site, {}).get('score', '-')
-            })
-        
-        df = pd.DataFrame(df_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No sites added yet. Add a site using the sidebar!")
-
-with tab2:
-    st.header("🔍 Check SEO for Your Sites")
-    
-    # Check all button
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("🚀 Check All", type="primary", use_container_width=True):
-            if st.session_state.sites:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, url in enumerate(st.session_state.sites):
-                    status_text.text(f"🔄 Checking: {url}")
-                    
-                    # Perform SEO check
-                    result = check_seo(url)
-                    result['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-                    st.session_state.results[url] = result
-                    
-                    progress_bar.progress((i + 1) / len(st.session_state.sites))
-                
-                status_text.text("✅ All sites checked!")
-                st.success("✅ All sites checked successfully!")
-                st.rerun()
-            else:
-                st.warning("⚠️ No sites to check. Add some first!")
-    
-    # Display results
-    if st.session_state.results:
-        st.subheader("📊 SEO Results")
-        
-        for url, result in st.session_state.results.items():
-            with st.expander(f"🔍 {url}", expanded=False):
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    st.write(f"**Score:** {result.get('score', 0)}/100")
-                    st.write(f"**Title:** {result.get('title', '❌ Missing')}")
-                    st.write(f"**Description:** {result.get('description', '❌ Missing')[:100]}...")
-                    st.write(f"**Word Count:** {result.get('word_count', 0)}")
-                    st.write(f"**Last Check:** {result.get('last_check', 'Never')}")
-                
-                with col2:
-                    if result.get('errors', 0) > 0:
-                        st.error(f"⚠️ {result.get('errors', 0)} issues found")
-                    else:
-                        st.success("✅ No issues found")
-                
-                if result.get('error_details'):
-                    st.write("**Issues Found:**")
-                    for detail in result.get('error_details', []):
-                        st.warning(f"• {detail}")
-
-with tab3:
-    st.header("📈 SEO Reports")
-    
-    if st.session_state.results:
-        # Create summary dataframe
-        data = []
-        for url, result in st.session_state.results.items():
-            data.append({
-                'Site': url,
-                'Score': result.get('score', 0),
-                'Title': result.get('title', 'Missing'),
-                'Description': '✅' if result.get('description') else '❌',
-                'H1 Tag': '✅' if result.get('h1') else '❌',
-                'Images with Alt': f"{result.get('images_with_alt', 0)}/{result.get('total_images', 0)}",
-                'Word Count': result.get('word_count', 0),
-                'Issues': result.get('errors', 0)
-            })
-        
-        df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        # Show statistics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Sites Checked", len(df))
-        with col2:
-            avg_score = df['Score'].mean()
-            st.metric("Average Score", f"{avg_score:.1f}/100")
-        with col3:
-            total_issues = df['Issues'].sum()
-            st.metric("Total Issues Found", total_issues)
-    else:
-        st.info("Run a scan first to generate reports")
-
-# Footer
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.caption("🚀 SEO Monitor v1.0 | Made with Streamlit")
-
-# Helper Functions
+# ============ SEO CHECKER FUNCTION (MUST BE DEFINED FIRST) ============
 def check_seo(url):
     """Check SEO for a single URL"""
     result = {
@@ -242,7 +46,6 @@ def check_seo(url):
         if title and title.text.strip():
             result['title'] = title.text.strip()
             result['score'] += 25
-            # Title length check
             title_len = len(title.text.strip())
             if title_len < 30:
                 result['error_details'].append(f"⚠️ Title too short: {title_len} chars (< 30)")
@@ -313,9 +116,8 @@ def check_seo(url):
         links = soup.find_all('a', href=True)
         if links:
             result['score'] += 5
-            # Check for broken links (basic)
             broken_links = 0
-            for link in links[:5]:  # Check first 5 links only to avoid timeout
+            for link in links[:5]:
                 href = link['href']
                 if href.startswith('http'):
                     try:
@@ -341,7 +143,7 @@ def check_seo(url):
         if viewport:
             result['score'] += 5
         else:
-            result['error_details'].append("⚠️ Missing viewport meta tag (not mobile-friendly)")
+            result['error_details'].append("⚠️ Missing viewport meta tag")
             result['errors'] += 1
         
         # Check canonical
@@ -365,18 +167,346 @@ def check_seo(url):
     
     return result
 
-def create_csv_report(results):
-    """Create CSV report from results"""
-    data = []
-    for url, result in results.items():
-        data.append({
-            'URL': url,
-            'Score': result.get('score', 0),
-            'Title': result.get('title', 'Missing'),
-            'Description': result.get('description', 'Missing'),
-            'Word Count': result.get('word_count', 0),
-            'Errors': result.get('errors', 0),
-            'Issues': '; '.join(result.get('error_details', []))
-        })
-    df = pd.DataFrame(data)
-    return df.to_csv(index=False)
+# ============ PAGE CONFIG ============
+st.set_page_config(
+    page_title="SEO Monitor - 50 Sites",
+    page_icon="🔍",
+    layout="wide"
+)
+
+# ============ TITLE ============
+st.title("🔍 SEO Monitor Dashboard")
+st.markdown("---")
+
+# ============ SESSION STATE ============
+if 'sites' not in st.session_state:
+    st.session_state.sites = []
+if 'results' not in st.session_state:
+    st.session_state.results = {}
+
+# ============ AUTO-IMPORT SITES ============
+def auto_import_sites():
+    """Automatically import sites from sites.txt on app start"""
+    if os.path.exists('sites.txt') and not st.session_state.sites:
+        with open('sites.txt', 'r') as f:
+            for line in f:
+                url = line.strip()
+                if url and not url.startswith('#'):
+                    if not url.startswith('http'):
+                        url = 'https://' + url
+                    if url not in st.session_state.sites:
+                        st.session_state.sites.append(url)
+        if st.session_state.sites:
+            st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
+
+# Run auto-import
+auto_import_sites()
+
+# ============ SIDEBAR ============
+with st.sidebar:
+    st.header("📋 Site Management")
+    
+    # Show site count
+    st.metric("Total Sites", len(st.session_state.sites))
+    
+    st.markdown("---")
+    
+    # Add single site
+    st.subheader("➕ Add Single Site")
+    new_url = st.text_input("Website URL", placeholder="https://example.com")
+    if st.button("Add Site", use_container_width=True):
+        if new_url:
+            if not new_url.startswith('http'):
+                new_url = 'https://' + new_url
+            if new_url not in st.session_state.sites:
+                st.session_state.sites.append(new_url)
+                st.success(f"✅ Added {new_url}")
+                st.rerun()
+            else:
+                st.warning("⚠️ Site already exists")
+    
+    st.markdown("---")
+    
+    # Bulk Import from sites.txt
+    st.subheader("📥 Bulk Import")
+    
+    if os.path.exists('sites.txt'):
+        with open('sites.txt', 'r') as f:
+            total_in_file = sum(1 for line in f if line.strip() and not line.startswith('#'))
+        st.info(f"📄 Found sites.txt with {total_in_file} sites")
+        
+        if st.button("📂 Import All from sites.txt", use_container_width=True):
+            imported = 0
+            with open('sites.txt', 'r') as f:
+                for line in f:
+                    url = line.strip()
+                    if url and not url.startswith('#'):
+                        if not url.startswith('http'):
+                            url = 'https://' + url
+                        if url not in st.session_state.sites:
+                            st.session_state.sites.append(url)
+                            imported += 1
+            if imported > 0:
+                st.success(f"✅ Imported {imported} new sites!")
+                st.rerun()
+            else:
+                st.warning("No new sites to import")
+    else:
+        st.warning("⚠️ sites.txt not found")
+    
+    st.markdown("---")
+    
+    # Bulk Paste
+    st.subheader("📝 Bulk Paste")
+    bulk_urls = st.text_area(
+        "Paste URLs (one per line)",
+        placeholder="game365ph.org\nkalaroko.org\njackpotphl.org",
+        height=100
+    )
+    if st.button("➕ Add All Pasted", use_container_width=True):
+        if bulk_urls:
+            urls = [url.strip() for url in bulk_urls.split('\n') if url.strip()]
+            added = 0
+            for url in urls:
+                if not url.startswith('http'):
+                    url = 'https://' + url
+                if url not in st.session_state.sites:
+                    st.session_state.sites.append(url)
+                    added += 1
+            st.success(f"✅ Added {added} of {len(urls)} sites!")
+            st.rerun()
+        else:
+            st.warning("Please paste some URLs first")
+    
+    st.markdown("---")
+    
+    # Actions
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🧹 Clear All", use_container_width=True):
+            st.session_state.sites = []
+            st.session_state.results = {}
+            st.rerun()
+    with col2:
+        if st.button("📊 Export Sites", use_container_width=True):
+            if st.session_state.sites:
+                sites_text = "\n".join(st.session_state.sites)
+                st.download_button(
+                    label="📥 Download sites.txt",
+                    data=sites_text,
+                    file_name="exported_sites.txt",
+                    mime="text/plain"
+                )
+
+# ============ MAIN TABS ============
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 SEO Checker", "📈 Reports"])
+
+with tab1:
+    # Summary cards
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_sites = len(st.session_state.sites)
+    checked_sites = len(st.session_state.results)
+    sites_with_errors = sum(1 for r in st.session_state.results.values() if r.get('errors', 0) > 0)
+    
+    avg_score = 0
+    if st.session_state.results:
+        scores = [r.get('score', 0) for r in st.session_state.results.values()]
+        avg_score = sum(scores) / len(scores)
+    
+    with col1:
+        st.metric("📋 Total Sites", total_sites)
+    with col2:
+        st.metric("✅ Checked", checked_sites)
+    with col3:
+        st.metric("⚠️ Issues Found", sites_with_errors)
+    with col4:
+        st.metric("📊 Avg SEO Score", f"{avg_score:.1f}/100")
+    
+    # Site list with pagination
+    st.subheader("📋 Monitored Sites")
+    if st.session_state.sites:
+        sites_per_page = 20
+        total_pages = (len(st.session_state.sites) - 1) // sites_per_page + 1
+        
+        if 'page' not in st.session_state:
+            st.session_state.page = 1
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("◀ Previous", disabled=(st.session_state.page <= 1)):
+                st.session_state.page -= 1
+                st.rerun()
+        with col2:
+            st.write(f"Page {st.session_state.page} of {total_pages}")
+        with col3:
+            if st.button("Next ▶", disabled=(st.session_state.page >= total_pages)):
+                st.session_state.page += 1
+                st.rerun()
+        
+        start_idx = (st.session_state.page - 1) * sites_per_page
+        end_idx = min(start_idx + sites_per_page, len(st.session_state.sites))
+        
+        df_data = []
+        for site in st.session_state.sites[start_idx:end_idx]:
+            status = "✅ Active"
+            if site in st.session_state.results:
+                result = st.session_state.results[site]
+                if result.get('errors', 0) > 0:
+                    status = "⚠️ Has Issues"
+                last_check = result.get('last_check', 'Never')
+                score = result.get('score', '-')
+            else:
+                last_check = 'Never'
+                score = '-'
+            
+            df_data.append({
+                'Site': site.replace('https://', ''),
+                'Status': status,
+                'Last Check': last_check,
+                'Score': score
+            })
+        
+        df = pd.DataFrame(df_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No sites added yet. Import from sites.txt or add manually!")
+
+with tab2:
+    st.header("🔍 Check SEO for Your Sites")
+    
+    # Check all button
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🚀 Check All", type="primary", use_container_width=True):
+            if st.session_state.sites:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                results_container = st.empty()
+                
+                total = len(st.session_state.sites)
+                results_list = []
+                
+                for i, url in enumerate(st.session_state.sites):
+                    status_text.text(f"🔄 Checking {i+1}/{total}: {url}")
+                    
+                    # Perform SEO check
+                    result = check_seo(url)
+                    result['last_check'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+                    st.session_state.results[url] = result
+                    results_list.append(result)
+                    
+                    # Update progress
+                    progress_bar.progress((i + 1) / total)
+                    
+                    # Show current result
+                    with results_container.container():
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Checked", f"{i+1}/{total}")
+                        with col2:
+                            errors_found = sum(1 for r in results_list if r.get('errors', 0) > 0)
+                            st.metric("Sites with Issues", errors_found)
+                        with col3:
+                            avg = sum(r.get('score', 0) for r in results_list) / (i+1)
+                            st.metric("Avg Score", f"{avg:.1f}")
+                
+                status_text.text("✅ All sites checked!")
+                st.success(f"✅ Successfully checked all {total} sites!")
+                st.rerun()
+            else:
+                st.warning("⚠️ No sites to check. Add some first!")
+    
+    # Display results for checked sites
+    if st.session_state.results:
+        st.subheader("📊 Recent Results")
+        
+        recent_results = list(st.session_state.results.items())[-10:]
+        
+        for url, result in recent_results:
+            with st.expander(f"🔍 {url.replace('https://', '')}", expanded=False):
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.write(f"**Score:** {result.get('score', 0)}/100")
+                    st.write(f"**Title:** {result.get('title', '❌ Missing')}")
+                    st.write(f"**Description:** {result.get('description', '❌ Missing')[:100]}...")
+                    st.write(f"**Word Count:** {result.get('word_count', 0)}")
+                
+                with col2:
+                    if result.get('errors', 0) > 0:
+                        st.error(f"⚠️ {result.get('errors', 0)} issues found")
+                    else:
+                        st.success("✅ No issues found")
+                
+                if result.get('error_details'):
+                    st.write("**Issues Found:**")
+                    for detail in result.get('error_details', []):
+                        st.warning(f"• {detail}")
+
+with tab3:
+    st.header("📈 SEO Reports")
+    
+    if st.session_state.results:
+        # Create summary dataframe
+        data = []
+        for url, result in st.session_state.results.items():
+            data.append({
+                'Site': url.replace('https://', ''),
+                'Score': result.get('score', 0),
+                'Title': result.get('title', 'Missing'),
+                'Description': '✅' if result.get('description') else '❌',
+                'H1 Tag': '✅' if result.get('h1') else '❌',
+                'Word Count': result.get('word_count', 0),
+                'Issues': result.get('errors', 0),
+                'Last Check': result.get('last_check', 'Never')
+            })
+        
+        df = pd.DataFrame(data)
+        df = df.sort_values('Score', ascending=False)
+        
+        st.subheader("📊 SEO Score Rankings")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Statistics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Sites", len(df))
+        with col2:
+            avg = df['Score'].mean()
+            st.metric("Average Score", f"{avg:.1f}/100")
+        with col3:
+            total_issues = df['Issues'].sum()
+            st.metric("Total Issues", total_issues)
+        with col4:
+            perfect = len(df[df['Issues'] == 0])
+            st.metric("Perfect Sites", perfect)
+        
+        # Export
+        st.subheader("📥 Export Data")
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Full Report as CSV",
+            data=csv,
+            file_name=f"seo_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+        # Worst performers
+        st.subheader("⚠️ Sites Needing Attention")
+        worst_sites = df[df['Issues'] > 0].head(10)
+        if not worst_sites.empty:
+            st.dataframe(worst_sites[['Site', 'Score', 'Issues']], use_container_width=True)
+        else:
+            st.success("🎉 No sites with issues found!")
+    else:
+        st.info("Run a scan first to generate reports")
+
+# ============ FOOTER ============
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption(f"📊 Total Sites: {len(st.session_state.sites)} | Checked: {len(st.session_state.results)}")
+    st.caption("🚀 SEO Monitor v1.0 | Made with Streamlit")
