@@ -12,6 +12,7 @@ import json
 from collections import Counter
 import random
 import urllib3
+import ssl
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -56,20 +57,57 @@ if 'current_page' not in st.session_state:
     st.session_state.current_page = 1
 
 def get_page_content(url):
-    for attempt in range(3):
-        try:
-            headers = get_random_headers()
-            time.sleep(random.uniform(1, 2))
-            response = requests.get(url, timeout=20, headers=headers, allow_redirects=True, verify=False)
-            if response.status_code == 200:
-                return response.text, response.status_code
-            elif response.status_code != 403:
-                return response.text, response.status_code
-        except:
-            continue
+    """Get page content with multiple methods to bypass blocks"""
+    
+    # Try different approaches
+    methods = [
+        'standard',
+        'firefox',
+        'mobile',
+        'chrome_latest',
+        'no_verify'
+    ]
+    
+    for method in methods:
+        for attempt in range(2):
+            try:
+                headers = get_random_headers()
+                
+                if method == 'firefox':
+                    headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+                elif method == 'mobile':
+                    headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+                elif method == 'chrome_latest':
+                    headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                
+                time.sleep(random.uniform(0.5, 1.5))
+                
+                if method == 'no_verify':
+                    response = requests.get(url, timeout=25, headers=headers, allow_redirects=True, verify=False)
+                else:
+                    response = requests.get(url, timeout=25, headers=headers, allow_redirects=True)
+                
+                if response.status_code == 200:
+                    return response.text, response.status_code
+                elif response.status_code == 403:
+                    # Try next method
+                    continue
+                else:
+                    return response.text, response.status_code
+                    
+            except requests.exceptions.SSLError:
+                try:
+                    response = requests.get(url, timeout=25, headers=headers, allow_redirects=True, verify=False)
+                    if response.status_code == 200:
+                        return response.text, response.status_code
+                except:
+                    continue
+            except:
+                continue
+    
     return "", 0
 
-# ============ COMPLETE SEO AUDIT ============
+# ============ COMPLETE SEO AUDIT WITH ALL METRICS ============
 def complete_seo_audit(url):
     """Complete SEO audit with ALL 50+ metrics"""
     result = {
