@@ -15,6 +15,11 @@ import urllib3
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Detect cloud environment
+IS_CLOUD = os.environ.get('STREAMLIT_SHARING_MODE') == 'true' or \
+           os.environ.get('STREAMLIT_CLOUD') == 'true' or \
+           os.environ.get('STREAMLIT_SERVER_PORT') is not None
+
 # Try to import selenium
 try:
     from selenium import webdriver
@@ -31,28 +36,30 @@ except ImportError:
 st.set_page_config(page_title="Complete SEO Audit", page_icon="🔍", layout="wide")
 
 # ============ USER AGENTS ============
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-]
-
 def get_random_headers():
+    """Get random headers with mobile user agents to avoid blocking"""
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 11; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Mobile Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    ]
+    
     return {
-        'User-Agent': random.choice(USER_AGENTS),
+        'User-Agent': random.choice(user_agents),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Encoding': 'gzip, deflate',
         'Connection': 'keep-alive',
+        'Cache-Control': 'max-age=0',
         'Upgrade-Insecure-Requests': '1',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
         'DNT': '1'
     }
 
@@ -66,38 +73,49 @@ if 'initialized' not in st.session_state:
 
 # ============ GET PAGE CONTENT FUNCTION ============
 def get_page_content(url):
-    """Try multiple methods to get page content"""
+    """Try multiple methods to get page content - optimized for cloud"""
     
-    # Clean URL
     if not url.startswith('http'):
         url = 'https://' + url
     
-    # Try requests with rotating user agents
-    for attempt in range(5):
+    # Method 1: Try requests with multiple attempts
+    for attempt in range(8):  # More attempts for cloud
         try:
             headers = get_random_headers()
             session = requests.Session()
+            
+            # Add a small delay between attempts
+            if attempt > 0:
+                time.sleep(random.uniform(2, 5))
+            
             response = session.get(
                 url, 
-                timeout=25, 
+                timeout=30,  # Longer timeout for cloud
                 headers=headers, 
                 allow_redirects=True, 
                 verify=False
             )
             
-            if response.status_code == 200 and len(response.text) > 1000:
-                return response.text, response.status_code
-            elif response.status_code == 200:
-                # Got content but might be minimal, try Selenium
-                if SELENIUM_AVAILABLE:
-                    return selenium_get_content(url)
+            # Check if we got real content
+            if response.status_code == 200:
+                content = response.text
+                if len(content) > 1000:
+                    return content, response.status_code
+                elif len(content) > 100:
+                    # Might be a JavaScript page, try Selenium
+                    if SELENIUM_AVAILABLE:
+                        return selenium_get_content(url)
+                    return content, response.status_code
                     
+        except requests.exceptions.Timeout:
+            print(f"Timeout on attempt {attempt + 1}")
+            time.sleep(3)
+            continue
         except Exception as e:
-            print(f"Request attempt {attempt + 1} failed: {e}")
-            time.sleep(random.uniform(1, 3))
+            print(f"Attempt {attempt + 1} failed: {e}")
             continue
     
-    # Try Selenium as fallback
+    # Method 2: Try Selenium as fallback
     if SELENIUM_AVAILABLE:
         try:
             return selenium_get_content(url)
@@ -119,14 +137,26 @@ def selenium_get_content(url):
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         options.add_experimental_option('useAutomationExtension', False)
         
+        # Additional options for cloud
+        options.add_argument('--disable-web-security')
+        options.add_argument('--disable-features=VizDisplayCompositor')
+        options.add_argument('--disable-extensions')
+        
         try:
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=options)
         except:
-            driver = webdriver.Chrome(options=options)
+            try:
+                driver = webdriver.Chrome(options=options)
+            except:
+                # Try with executable path
+                driver = webdriver.Chrome(
+                    executable_path='/usr/local/bin/chromedriver',
+                    options=options
+                )
         
         driver.get(url)
-        time.sleep(8)  # Wait for JavaScript
+        time.sleep(10)  # Wait for JavaScript
         html = driver.page_source
         driver.quit()
         
@@ -385,9 +415,8 @@ def complete_seo_audit(url):
             result['all_issues'].append("⚠️ No links found")
             result['warnings'] += 1
         
-        # Broken links check
+        # Broken links check (only check a few to avoid timeout)
         broken = 0
-        checked = 0
         for link in all_links[:10]:
             href = link.get('href', '')
             if href and href.startswith('http'):
@@ -395,10 +424,8 @@ def complete_seo_audit(url):
                     resp = requests.head(href, timeout=3, allow_redirects=True, verify=False)
                     if resp.status_code >= 400:
                         broken += 1
-                    checked += 1
                 except:
                     broken += 1
-                    checked += 1
         result['broken_links'] = broken
         
         # ===== IMAGES =====
@@ -582,6 +609,7 @@ def auto_import_sites():
             f.write("https://wikipedia.org\n")
             f.write("https://stackoverflow.com\n")
             f.write("https://bbc.com\n")
+            f.write("https://python.org\n")
     
     if not st.session_state.initialized:
         try:
@@ -632,7 +660,8 @@ with st.sidebar:
                 "https://github.com", 
                 "https://wikipedia.org",
                 "https://stackoverflow.com",
-                "https://bbc.com"
+                "https://bbc.com",
+                "https://python.org"
             ]
             for site in test_sites:
                 if site not in st.session_state.sites:
@@ -961,7 +990,7 @@ with tab3:
                 'Score': result.get('score', 0),
                 'Errors': result.get('errors', 0),
                 'Warnings': result.get('warnings', 0),
-                'Title': result.get('title', ''),
+                'Title': result.get('title', '')[:50],
                 'Description': result.get('meta_description', '')[:100],
                 'Total Words': result.get('total_words', 0),
                 'Internal Links': result.get('internal_links', 0),
@@ -995,7 +1024,6 @@ with tab3:
             )
         
         with col2:
-            # Summary statistics
             st.write("**Summary Statistics:**")
             st.write(f"- Average Score: {df['Score'].mean():.1f}/100")
             st.write(f"- Total Sites: {len(df)}")
