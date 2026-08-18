@@ -15,52 +15,24 @@ import urllib3
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Detect cloud environment
-IS_CLOUD = os.environ.get('STREAMLIT_SHARING_MODE') == 'true' or \
-           os.environ.get('STREAMLIT_CLOUD') == 'true' or \
-           os.environ.get('STREAMLIT_SERVER_PORT') is not None
-
-# Try to import selenium
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from webdriver_manager.chrome import ChromeDriverManager
-    SELENIUM_AVAILABLE = True
-except ImportError:
-    SELENIUM_AVAILABLE = False
-
-st.set_page_config(page_title="Complete SEO Audit", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Complete SEO Audit + Optimization", page_icon="🔍", layout="wide")
 
 # ============ USER AGENTS ============
 def get_random_headers():
-    """Get random headers with mobile user agents to avoid blocking"""
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
         'Mozilla/5.0 (Linux; Android 11; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Mobile Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
     ]
-    
     return {
         'User-Agent': random.choice(user_agents),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate',
         'Connection': 'keep-alive',
-        'Cache-Control': 'max-age=0',
         'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'DNT': '1'
+        'Cache-Control': 'max-age=0',
     }
 
 # ============ SESSION STATE ============
@@ -71,128 +43,41 @@ if 'results' not in st.session_state:
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
 
-# ============ GET PAGE CONTENT FUNCTION ============
+# ============ GET PAGE CONTENT ============
 def get_page_content(url):
-    """Try multiple methods to get page content - optimized for cloud"""
-    
     if not url.startswith('http'):
         url = 'https://' + url
     
-    # Method 1: Try requests with multiple attempts
-    for attempt in range(8):  # More attempts for cloud
+    for attempt in range(5):
         try:
             headers = get_random_headers()
-            session = requests.Session()
-            
-            # Add a small delay between attempts
-            if attempt > 0:
-                time.sleep(random.uniform(2, 5))
-            
-            response = session.get(
-                url, 
-                timeout=30,  # Longer timeout for cloud
-                headers=headers, 
-                allow_redirects=True, 
-                verify=False
-            )
-            
-            # Check if we got real content
-            if response.status_code == 200:
-                content = response.text
-                if len(content) > 1000:
-                    return content, response.status_code
-                elif len(content) > 100:
-                    # Might be a JavaScript page, try Selenium
-                    if SELENIUM_AVAILABLE:
-                        return selenium_get_content(url)
-                    return content, response.status_code
-                    
-        except requests.exceptions.Timeout:
-            print(f"Timeout on attempt {attempt + 1}")
-            time.sleep(3)
-            continue
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-            continue
-    
-    # Method 2: Try Selenium as fallback
-    if SELENIUM_AVAILABLE:
-        try:
-            return selenium_get_content(url)
-        except Exception as e:
-            print(f"Selenium failed: {e}")
-    
-    return "", 0
-
-def selenium_get_content(url):
-    """Get content using Selenium"""
-    try:
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        options.add_experimental_option('useAutomationExtension', False)
-        
-        # Additional options for cloud
-        options.add_argument('--disable-web-security')
-        options.add_argument('--disable-features=VizDisplayCompositor')
-        options.add_argument('--disable-extensions')
-        
-        try:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
+            response = requests.get(url, timeout=30, headers=headers, allow_redirects=True, verify=False)
+            if response.status_code == 200 and len(response.text) > 500:
+                return response.text, response.status_code
         except:
-            try:
-                driver = webdriver.Chrome(options=options)
-            except:
-                # Try with executable path
-                driver = webdriver.Chrome(
-                    executable_path='/usr/local/bin/chromedriver',
-                    options=options
-                )
-        
-        driver.get(url)
-        time.sleep(10)  # Wait for JavaScript
-        html = driver.page_source
-        driver.quit()
-        
-        if html and len(html) > 1000:
-            return html, 200
-        
-    except Exception as e:
-        print(f"Selenium error: {e}")
-    
+            time.sleep(random.uniform(1, 3))
+            continue
     return "", 0
 
 # ============ COMPLETE SEO AUDIT ============
 def complete_seo_audit(url):
-    """Complete SEO audit with ALL 50+ metrics"""
     result = {
         'url': url,
         'score': 0,
-        'errors': 0,
-        'warnings': 0,
-        'all_issues': [],
+        'errors': [],
+        'warnings': [],
         'successes': [],
+        'optimizations': [],
         'last_check': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'is_accessible': False,
-        'error_message': None,
         'status_code': None,
         'response_time': 0,
         'page_size': 0,
-        
-        # META TAGS
         'title': '',
         'title_length': 0,
         'meta_description': '',
         'meta_description_length': 0,
         'meta_keywords': '',
-        
-        # HEADINGS
         'h1_count': 0,
         'h1_text': '',
         'h2_count': 0,
@@ -200,42 +85,33 @@ def complete_seo_audit(url):
         'h4_count': 0,
         'h5_count': 0,
         'h6_count': 0,
-        'all_headings': [],
-        
-        # CONTENT
         'total_words': 0,
         'paragraph_count': 0,
         'sentence_count': 0,
         'top_keywords': [],
-        
-        # LINKS
+        'readability_score': 0,
         'total_links': 0,
         'internal_links': 0,
         'external_links': 0,
         'nofollow_links': 0,
-        'broken_links': 0,
-        
-        # IMAGES
+        'broken_links': [],
+        'broken_links_count': 0,
+        'anchor_texts': [],
         'total_images': 0,
         'images_with_alt': 0,
         'images_without_alt': 0,
-        
-        # SCHEMA
+        'missing_alt_list': [],
         'has_schema': False,
-        'schema_types': '',
-        
-        # OPEN GRAPH
+        'schema_types': [],
         'has_og': False,
         'og_title': '',
         'og_description': '',
         'og_image': '',
-        
-        # TWITTER CARDS
+        'og_url': '',
         'has_twitter': False,
-        'twitter_title': '',
         'twitter_card': '',
-        
-        # TECHNICAL
+        'twitter_title': '',
+        'twitter_description': '',
         'has_ssl': False,
         'has_viewport': False,
         'has_canonical': False,
@@ -244,31 +120,28 @@ def complete_seo_audit(url):
         'language': '',
         'has_robots': False,
         'robots_content': '',
-        
-        # PERFORMANCE
+        'has_sitemap': False,
         'css_count': 0,
         'js_count': 0,
         'has_lazy_loading': False,
-        
-        # SECURITY
+        'has_compression': False,
         'has_mixed_content': False,
-        'is_mobile_friendly': False
+        'is_mobile_friendly': False,
+        'meta_score': 0,
+        'content_score': 0,
+        'link_score': 0,
+        'image_score': 0,
+        'technical_score': 0,
+        'severity': []
     }
     
     try:
         start_time = time.time()
-        
-        if not url.startswith('http'):
-            url = 'https://' + url
-        
         html_content, status_code = get_page_content(url)
         result['status_code'] = status_code
         
         if not html_content or len(html_content) < 100:
-            result['error_message'] = f"Failed to load page (Status: {status_code})"
-            result['all_issues'].append(f"❌ Failed to load page - Status: {status_code}")
-            result['errors'] += 1
-            result['is_accessible'] = False
+            result['errors'].append(f"Failed to load page - Status: {status_code}")
             return result
         
         result['response_time'] = round(time.time() - start_time, 2)
@@ -284,70 +157,74 @@ def complete_seo_audit(url):
         if title and title.text.strip():
             result['title'] = title.text.strip()
             result['title_length'] = len(title.text.strip())
-            result['successes'].append(f"✅ Title found: {result['title_length']} chars")
-        else:
-            # Try OG title as fallback
-            og_title = soup.find('meta', attrs={'property': 'og:title'})
-            if og_title and og_title.get('content'):
-                result['title'] = og_title.get('content')
-                result['title_length'] = len(result['title'])
-                result['successes'].append(f"✅ Title from OG: {result['title_length']} chars")
+            result['successes'].append(f"Title: {result['title_length']} chars")
+            
+            if 30 <= result['title_length'] <= 60:
+                result['successes'].append("Title length is optimal (30-60 chars)")
+                result['meta_score'] += 15
+            elif result['title_length'] < 30:
+                result['warnings'].append(f"Title too short: {result['title_length']} chars (recommend 30-60)")
+                result['optimizations'].append("Increase title length to 30-60 characters")
             else:
-                result['all_issues'].append("❌ Missing title tag")
-                result['errors'] += 1
+                result['warnings'].append(f"Title too long: {result['title_length']} chars (recommend 30-60)")
+                result['optimizations'].append("Shorten title to 30-60 characters")
+        else:
+            result['errors'].append("Missing title tag")
+            result['optimizations'].append("Add a title tag with primary keywords")
         
+        # Meta Description
         meta_desc = soup.find('meta', attrs={'name': 'description'})
-        if meta_desc:
-            desc_content = meta_desc.get('content', '').strip()
-            if desc_content:
-                result['meta_description'] = desc_content
-                result['meta_description_length'] = len(desc_content)
-                result['successes'].append(f"✅ Description found: {result['meta_description_length']} chars")
+        if meta_desc and meta_desc.get('content', '').strip():
+            result['meta_description'] = meta_desc.get('content').strip()
+            result['meta_description_length'] = len(result['meta_description'])
+            result['successes'].append(f"Description: {result['meta_description_length']} chars")
+            
+            if 50 <= result['meta_description_length'] <= 160:
+                result['successes'].append("Description length is optimal (50-160 chars)")
+                result['meta_score'] += 15
+            elif result['meta_description_length'] < 50:
+                result['warnings'].append(f"Description too short: {result['meta_description_length']} chars")
+                result['optimizations'].append("Expand description to 50-160 characters")
             else:
-                # Try OG description
-                og_desc = soup.find('meta', attrs={'property': 'og:description'})
-                if og_desc and og_desc.get('content'):
-                    result['meta_description'] = og_desc.get('content')
-                    result['meta_description_length'] = len(result['meta_description'])
-                    result['successes'].append(f"✅ Description from OG: {result['meta_description_length']} chars")
-                else:
-                    result['all_issues'].append("⚠️ Description is empty")
-                    result['warnings'] += 1
+                result['warnings'].append(f"Description too long: {result['meta_description_length']} chars")
+                result['optimizations'].append("Shorten description to 50-160 characters")
         else:
-            # Try OG description
-            og_desc = soup.find('meta', attrs={'property': 'og:description'})
-            if og_desc and og_desc.get('content'):
-                result['meta_description'] = og_desc.get('content')
-                result['meta_description_length'] = len(result['meta_description'])
-                result['successes'].append(f"✅ Description from OG: {result['meta_description_length']} chars")
-            else:
-                result['all_issues'].append("❌ Missing meta description")
-                result['errors'] += 1
+            result['errors'].append("Missing meta description")
+            result['optimizations'].append("Add a meta description with key information")
         
+        # Meta Keywords
         meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
         if meta_keywords:
             result['meta_keywords'] = meta_keywords.get('content', '')
-            result['successes'].append("✅ Meta keywords present")
+            result['successes'].append("Meta keywords present")
         
         # ===== HEADINGS =====
         h1_tags = soup.find_all('h1')
         result['h1_count'] = len(h1_tags)
         if h1_tags and h1_tags[0].text.strip():
             result['h1_text'] = h1_tags[0].text.strip()
-            if len(h1_tags) == 1:
-                result['successes'].append(f"✅ Single H1: {result['h1_text'][:50]}")
-            else:
-                result['all_issues'].append(f"⚠️ Multiple H1 tags: {len(h1_tags)} found")
-                result['warnings'] += 1
+        
+        if result['h1_count'] == 1:
+            result['successes'].append(f"Single H1: {result['h1_text'][:50]}")
+            result['content_score'] += 10
+        elif result['h1_count'] == 0:
+            result['errors'].append("No H1 heading found")
+            result['optimizations'].append("Add an H1 heading with primary keyword")
         else:
-            result['all_issues'].append("⚠️ No H1 heading found")
-            result['warnings'] += 1
+            result['warnings'].append(f"Multiple H1 tags: {result['h1_count']} found")
+            result['optimizations'].append("Use only one H1 tag per page")
         
         result['h2_count'] = len(soup.find_all('h2'))
         result['h3_count'] = len(soup.find_all('h3'))
         result['h4_count'] = len(soup.find_all('h4'))
         result['h5_count'] = len(soup.find_all('h5'))
         result['h6_count'] = len(soup.find_all('h6'))
+        
+        if result['h2_count'] > 0:
+            result['successes'].append(f"{result['h2_count']} H2 headings found")
+        else:
+            result['warnings'].append("No H2 headings found")
+            result['optimizations'].append("Add H2 headings to structure content")
         
         # ===== CONTENT =====
         for script in soup(["script", "style"]):
@@ -357,20 +234,41 @@ def complete_seo_audit(url):
         words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', text)
         result['total_words'] = len(words)
         
-        if result['total_words'] > 300:
-            result['successes'].append(f"✅ Good content: {result['total_words']} words")
-        else:
-            result['all_issues'].append(f"⚠️ Thin content: {result['total_words']} words")
-            result['warnings'] += 1
-        
         paragraphs = soup.find_all('p')
         result['paragraph_count'] = len(paragraphs)
         
         sentences = re.split(r'[.!?]+', text)
         result['sentence_count'] = len([s for s in sentences if len(s.strip()) > 10])
         
-        # Top keywords
-        stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go', 'me'}
+        if result['total_words'] > 300:
+            result['successes'].append(f"Good content: {result['total_words']} words")
+            result['content_score'] += 15
+            if result['total_words'] > 1000:
+                result['successes'].append("Excellent content length (1000+ words)")
+                result['content_score'] += 5
+        elif result['total_words'] > 100:
+            result['warnings'].append(f"Thin content: {result['total_words']} words (recommend 300+)")
+            result['optimizations'].append("Add more content, aim for 300+ words")
+        else:
+            result['errors'].append(f"Very thin content: {result['total_words']} words")
+            result['optimizations'].append("Significantly expand content to 300+ words")
+        
+        # Readability
+        if result['sentence_count'] > 0 and result['total_words'] > 0:
+            avg_words_per_sentence = result['total_words'] / result['sentence_count']
+            if 10 <= avg_words_per_sentence <= 20:
+                result['successes'].append("Good readability")
+                result['readability_score'] = 85
+            elif avg_words_per_sentence < 10:
+                result['warnings'].append("Sentences may be too short")
+                result['readability_score'] = 60
+            else:
+                result['warnings'].append("Sentences may be too long")
+                result['readability_score'] = 50
+                result['optimizations'].append("Break up long sentences for better readability")
+        
+        # Top Keywords
+        stop_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go', 'me', 'when', 'can', 'like', 'just', 'know', 'see', 'your', 'our', 'them', 'than', 'then', 'now', 'look', 'come', 'think', 'also', 'back', 'after', 'use', 'two', 'how', 'our', 'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 'us'}
         content_words = [w.lower() for w in words if w.lower() not in stop_words and len(w) > 3]
         word_freq = Counter(content_words)
         result['top_keywords'] = word_freq.most_common(10)
@@ -382,24 +280,31 @@ def complete_seo_audit(url):
         internal = 0
         external = 0
         nofollow = 0
+        anchor_texts = []
         
         for link in all_links:
             href = link.get('href', '')
             rel = link.get('rel', [])
+            anchor = link.text.strip()
+            
+            if anchor:
+                anchor_texts.append({
+                    'text': anchor[:50],
+                    'url': href[:100]
+                })
             
             if 'nofollow' in rel:
                 nofollow += 1
             
             if href:
                 if href.startswith('http'):
-                    if urlparse(href).netloc == base_domain or urlparse(href).netloc == '':
+                    if urlparse(href).netloc == base_domain:
                         internal += 1
                     else:
                         external += 1
                 elif href.startswith('/') or href.startswith('#'):
                     internal += 1
                 elif href.startswith('//'):
-                    # Protocol relative URL
                     if urlparse('https:' + href).netloc == base_domain:
                         internal += 1
                     else:
@@ -408,25 +313,44 @@ def complete_seo_audit(url):
         result['internal_links'] = internal
         result['external_links'] = external
         result['nofollow_links'] = nofollow
+        result['anchor_texts'] = anchor_texts[:20]
         
         if result['total_links'] > 0:
-            result['successes'].append(f"✅ {result['total_links']} links found ({internal} internal, {external} external)")
+            result['successes'].append(f"{result['total_links']} links found")
+            result['link_score'] += 10
         else:
-            result['all_issues'].append("⚠️ No links found")
-            result['warnings'] += 1
+            result['warnings'].append("No links found")
+            result['optimizations'].append("Add internal and external links")
         
-        # Broken links check (only check a few to avoid timeout)
-        broken = 0
-        for link in all_links[:10]:
-            href = link.get('href', '')
-            if href and href.startswith('http'):
-                try:
-                    resp = requests.head(href, timeout=3, allow_redirects=True, verify=False)
-                    if resp.status_code >= 400:
-                        broken += 1
-                except:
-                    broken += 1
-        result['broken_links'] = broken
+        if internal > 5:
+            result['successes'].append(f"Good internal linking: {internal} links")
+            result['link_score'] += 5
+        else:
+            result['warnings'].append(f"Few internal links: {internal}")
+            result['optimizations'].append("Add more internal links to other pages")
+        
+        # Broken Links
+        if all_links:
+            broken_urls = []
+            for link in all_links[:15]:
+                href = link.get('href', '')
+                if href and href.startswith('http'):
+                    try:
+                        resp = requests.head(href, timeout=5, allow_redirects=True, verify=False)
+                        if resp.status_code >= 400:
+                            broken_urls.append({'url': href[:80], 'status': resp.status_code})
+                    except:
+                        broken_urls.append({'url': href[:80], 'status': 'Error'})
+            
+            result['broken_links'] = broken_urls
+            result['broken_links_count'] = len(broken_urls)
+            
+            if result['broken_links_count'] > 0:
+                result['errors'].append(f"{result['broken_links_count']} broken links found")
+                result['optimizations'].append("Fix broken links by updating or removing them")
+                result['link_score'] -= 10
+            else:
+                result['successes'].append("No broken links detected")
         
         # ===== IMAGES =====
         images = soup.find_all('img')
@@ -434,6 +358,7 @@ def complete_seo_audit(url):
         
         with_alt = 0
         without_alt = 0
+        missing_alt_list = []
         
         for img in images:
             alt = img.get('alt', '').strip()
@@ -441,108 +366,123 @@ def complete_seo_audit(url):
                 with_alt += 1
             else:
                 without_alt += 1
+                src = img.get('src', '')
+                if src:
+                    missing_alt_list.append(src[:60])
         
         result['images_with_alt'] = with_alt
         result['images_without_alt'] = without_alt
+        result['missing_alt_list'] = missing_alt_list[:10]
         
         if result['total_images'] > 0:
-            result['successes'].append(f"✅ {result['total_images']} images found ({with_alt} with alt text)")
-        if without_alt > 0:
-            result['all_issues'].append(f"⚠️ {without_alt} images missing alt text")
-            result['warnings'] += 1
+            if without_alt == 0:
+                result['successes'].append(f"All {result['total_images']} images have alt text")
+                result['image_score'] += 15
+            else:
+                result['warnings'].append(f"{without_alt} images missing alt text")
+                result['optimizations'].append("Add alt text to all images")
+                result['image_score'] += 5
         
         # ===== SCHEMA =====
         schema_scripts = soup.find_all('script', attrs={'type': 'application/ld+json'})
         if schema_scripts:
             result['has_schema'] = True
-            schema_list = []
+            schema_types = []
             for script in schema_scripts:
                 try:
                     if script.string:
                         data = json.loads(script.string)
                         if isinstance(data, dict):
-                            schema_type = data.get('@type', 'Unknown')
+                            schema_type = data.get('@type', '')
                             if schema_type:
-                                schema_list.append(schema_type)
+                                schema_types.append(schema_type)
                         elif isinstance(data, list):
                             for item in data:
                                 if isinstance(item, dict):
-                                    schema_type = item.get('@type', 'Unknown')
+                                    schema_type = item.get('@type', '')
                                     if schema_type:
-                                        schema_list.append(schema_type)
+                                        schema_types.append(schema_type)
                 except:
                     pass
-            if schema_list:
-                result['schema_types'] = ', '.join(list(set(schema_list))[:3])
-                result['successes'].append(f"✅ Schema found: {result['schema_types']}")
-            else:
-                result['all_issues'].append("⚠️ Schema present but invalid")
-                result['warnings'] += 1
+            
+            result['schema_types'] = list(set(schema_types))[:5]
+            if result['schema_types']:
+                result['successes'].append(f"Schema found: {', '.join(result['schema_types'])}")
+                result['technical_score'] += 10
         else:
-            result['all_issues'].append("⚠️ No schema markup found")
-            result['warnings'] += 1
+            result['warnings'].append("No schema markup found")
+            result['optimizations'].append("Add schema markup for better rich snippets")
         
         # ===== OPEN GRAPH =====
         og_title = soup.find('meta', attrs={'property': 'og:title'})
         og_desc = soup.find('meta', attrs={'property': 'og:description'})
         og_image = soup.find('meta', attrs={'property': 'og:image'})
+        og_url = soup.find('meta', attrs={'property': 'og:url'})
         
         if og_title or og_desc or og_image:
             result['has_og'] = True
             result['og_title'] = og_title.get('content', '') if og_title else ''
             result['og_description'] = og_desc.get('content', '') if og_desc else ''
             result['og_image'] = og_image.get('content', '') if og_image else ''
-            result['successes'].append("✅ Open Graph tags present")
+            result['og_url'] = og_url.get('content', '') if og_url else ''
+            result['successes'].append("Open Graph tags present")
+            result['technical_score'] += 10
         else:
-            result['all_issues'].append("⚠️ Missing Open Graph tags")
-            result['warnings'] += 1
+            result['warnings'].append("Missing Open Graph tags")
+            result['optimizations'].append("Add Open Graph tags for social sharing")
         
         # ===== TWITTER CARDS =====
         twitter_card = soup.find('meta', attrs={'name': 'twitter:card'})
         twitter_title = soup.find('meta', attrs={'name': 'twitter:title'})
+        twitter_desc = soup.find('meta', attrs={'name': 'twitter:description'})
         
-        if twitter_card or twitter_title:
+        if twitter_card:
             result['has_twitter'] = True
-            result['twitter_card'] = twitter_card.get('content', '') if twitter_card else ''
+            result['twitter_card'] = twitter_card.get('content', '')
             result['twitter_title'] = twitter_title.get('content', '') if twitter_title else ''
-            result['successes'].append("✅ Twitter Card tags present")
+            result['twitter_description'] = twitter_desc.get('content', '') if twitter_desc else ''
+            result['successes'].append("Twitter Card tags present")
+            result['technical_score'] += 5
         else:
-            result['all_issues'].append("⚠️ Missing Twitter Card tags")
-            result['warnings'] += 1
+            result['warnings'].append("Missing Twitter Card tags")
+            result['optimizations'].append("Add Twitter Cards for better sharing")
         
         # ===== TECHNICAL =====
         viewport = soup.find('meta', attrs={'name': 'viewport'})
         if viewport:
             result['has_viewport'] = True
             result['is_mobile_friendly'] = True
-            result['successes'].append("✅ Viewport found")
+            result['successes'].append("Viewport found - mobile friendly")
+            result['technical_score'] += 10
         else:
-            result['all_issues'].append("❌ Missing viewport meta tag")
-            result['errors'] += 1
+            result['errors'].append("Missing viewport meta tag")
+            result['optimizations'].append("Add viewport meta tag for mobile responsiveness")
         
         canonical = soup.find('link', attrs={'rel': 'canonical'})
         if canonical:
             result['has_canonical'] = True
             result['canonical_url'] = canonical.get('href', '')
-            result['successes'].append("✅ Canonical tag found")
+            result['successes'].append("Canonical tag found")
+            result['technical_score'] += 5
         else:
-            result['all_issues'].append("⚠️ No canonical tag found")
-            result['warnings'] += 1
+            result['warnings'].append("No canonical tag found")
+            result['optimizations'].append("Add canonical tag to avoid duplicate content")
         
         html_tag = soup.find('html')
         if html_tag and html_tag.get('lang'):
             result['has_language'] = True
             result['language'] = html_tag.get('lang')
-            result['successes'].append(f"✅ Language: {result['language']}")
+            result['successes'].append(f"Language: {result['language']}")
+            result['technical_score'] += 5
         else:
-            result['all_issues'].append("⚠️ No language attribute")
-            result['warnings'] += 1
+            result['warnings'].append("No language attribute")
+            result['optimizations'].append("Add lang attribute to html tag")
         
         robots = soup.find('meta', attrs={'name': 'robots'})
         if robots:
             result['has_robots'] = True
             result['robots_content'] = robots.get('content', '')
-            result['successes'].append(f"✅ Robots: {result['robots_content']}")
+            result['successes'].append(f"Robots: {result['robots_content']}")
         
         # ===== PERFORMANCE =====
         result['css_count'] = len(soup.find_all('link', rel='stylesheet'))
@@ -551,7 +491,10 @@ def complete_seo_audit(url):
         lazy_images = soup.find_all('img', loading='lazy')
         if lazy_images:
             result['has_lazy_loading'] = True
-            result['successes'].append("✅ Lazy loading enabled")
+            result['successes'].append("Lazy loading enabled")
+        else:
+            result['warnings'].append("No lazy loading detected")
+            result['optimizations'].append("Implement lazy loading for images")
         
         # ===== SECURITY =====
         scripts = soup.find_all('script', src=True)
@@ -559,44 +502,51 @@ def complete_seo_audit(url):
             src = script.get('src', '')
             if src.startswith('http://') and url.startswith('https://'):
                 result['has_mixed_content'] = True
-                result['all_issues'].append("⚠️ Mixed content detected")
-                result['warnings'] += 1
+                result['errors'].append("Mixed content detected")
+                result['optimizations'].append("Update mixed content to HTTPS")
                 break
         
-        # ===== CALCULATE SCORE =====
-        score = 100
-        score -= result['errors'] * 5
-        score -= result['warnings'] * 2
-        
-        # Bonus points
-        if result['title'] and 30 <= result['title_length'] <= 60:
-            score += 3
-        if result['meta_description'] and 50 <= result['meta_description_length'] <= 160:
-            score += 3
-        if result['h1_count'] == 1:
-            score += 2
-        if result['total_words'] > 300:
-            score += 5
-        if result['has_schema']:
-            score += 3
-        if result['has_viewport']:
-            score += 2
-        if result['has_og']:
-            score += 2
-        if result['has_twitter']:
-            score += 2
         if result['has_ssl']:
-            score += 5
-        if result['internal_links'] > 5:
-            score += 3
+            result['successes'].append("SSL/HTTPS enabled")
+            result['technical_score'] += 10
+        else:
+            result['errors'].append("No SSL certificate")
+            result['optimizations'].append("Install SSL certificate for HTTPS")
         
-        result['score'] = max(0, min(100, score))
+        # ===== FINAL SCORE =====
+        result['meta_score'] = min(100, result['meta_score'])
+        result['content_score'] = min(100, result['content_score'] + (10 if result['total_words'] > 500 else 0))
+        result['link_score'] = min(100, result['link_score'] + (5 if result['internal_links'] > 10 else 0))
+        result['image_score'] = min(100, result['image_score'])
+        result['technical_score'] = min(100, result['technical_score'])
+        
+        total_score = (
+            result['meta_score'] * 0.25 +
+            result['content_score'] * 0.20 +
+            result['link_score'] * 0.15 +
+            result['image_score'] * 0.10 +
+            result['technical_score'] * 0.30
+        )
+        
+        result['score'] = round(total_score, 0)
+        
+        # ===== SEVERITY =====
+        if len(result['errors']) > 5:
+            result['severity'].append("CRITICAL: Many errors need immediate attention")
+        elif len(result['errors']) > 2:
+            result['severity'].append("WARNING: Fix errors to improve SEO")
+        
+        if result['score'] < 50:
+            result['severity'].append("POOR: Significant optimization needed")
+        elif result['score'] < 70:
+            result['severity'].append("AVERAGE: Some optimization needed")
+        elif result['score'] < 85:
+            result['severity'].append("GOOD: Minor improvements possible")
+        else:
+            result['severity'].append("EXCELLENT: Well optimized!")
         
     except Exception as e:
-        result['error_message'] = str(e)
-        result['all_issues'].append(f"❌ Error: {str(e)}")
-        result['errors'] += 1
-        result['is_accessible'] = False
+        result['errors'].append(f"Error: {str(e)}")
     
     return result
 
@@ -609,7 +559,6 @@ def auto_import_sites():
             f.write("https://wikipedia.org\n")
             f.write("https://stackoverflow.com\n")
             f.write("https://bbc.com\n")
-            f.write("https://python.org\n")
     
     if not st.session_state.initialized:
         try:
@@ -621,78 +570,40 @@ def auto_import_sites():
                             url = 'https://' + url
                         if url not in st.session_state.sites:
                             st.session_state.sites.append(url)
-            if st.session_state.sites:
-                st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
             st.session_state.initialized = True
-        except Exception as e:
-            st.error(f"Error importing sites: {e}")
+        except:
+            pass
 
 auto_import_sites()
 
 # ============ MAIN APP ============
-st.title("🔍 Complete SEO Audit")
-st.markdown("**Full SEO analysis with ALL 50+ metrics - Real Data**")
+st.title("🔍 Complete SEO Audit + Optimization Checker")
+st.markdown("**Full SEO analysis with optimization suggestions**")
 st.markdown("---")
 
 with st.sidebar:
     st.header("📋 Site Management")
     st.metric("Total Sites", len(st.session_state.sites))
-    
+    st.metric("Audited", len(st.session_state.results))
     st.markdown("---")
     
     new_url = st.text_input("➕ Add Site", placeholder="example.com")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Add Site", use_container_width=True):
-            if new_url:
-                if not new_url.startswith('http'):
-                    new_url = 'https://' + new_url
-                if new_url not in st.session_state.sites:
-                    st.session_state.sites.append(new_url)
-                    # Save to file
-                    with open('sites.txt', 'a') as f:
-                        f.write(f"\n{new_url}")
-                    st.rerun()
-    with col2:
-        if st.button("Add Test Sites", use_container_width=True):
-            test_sites = [
-                "https://google.com",
-                "https://github.com", 
-                "https://wikipedia.org",
-                "https://stackoverflow.com",
-                "https://bbc.com",
-                "https://python.org"
-            ]
-            for site in test_sites:
-                if site not in st.session_state.sites:
-                    st.session_state.sites.append(site)
-            st.rerun()
-    
-    st.markdown("---")
+    if st.button("Add Site", use_container_width=True):
+        if new_url:
+            if not new_url.startswith('http'):
+                new_url = 'https://' + new_url
+            if new_url not in st.session_state.sites:
+                st.session_state.sites.append(new_url)
+                with open('sites.txt', 'a') as f:
+                    f.write(f"\n{new_url}")
+                st.rerun()
     
     if st.button("🧹 Clear All", use_container_width=True):
         st.session_state.sites = []
         st.session_state.results = {}
-        st.session_state.initialized = False
         st.rerun()
-    
-    st.markdown("---")
-    st.caption("**SEO Metrics Checked:**")
-    st.caption("✅ Meta Title & Description")
-    st.caption("✅ Headings (H1-H6)")
-    st.caption("✅ Content Quality")
-    st.caption("✅ Internal/External Links")
-    st.caption("✅ Broken Links")
-    st.caption("✅ Images (Alt Text)")
-    st.caption("✅ Schema Markup")
-    st.caption("✅ Open Graph Tags")
-    st.caption("✅ Twitter Cards")
-    st.caption("✅ Technical SEO")
-    st.caption("✅ Performance")
-    st.caption("✅ Security")
-    st.caption("✅ Mobile Friendly")
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "🔍 Full SEO Audit", "📈 Reports"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "🔍 Full SEO Audit", "⚡ Optimization Checker", "📈 Reports"])
 
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
@@ -701,119 +612,66 @@ with tab1:
     with col2:
         st.metric("Analyzed", len(st.session_state.results))
     with col3:
-        errors = sum(1 for r in st.session_state.results.values() if r.get('errors', 0) > 0)
-        st.metric("Sites with Errors", errors)
+        total_errors = sum(len(r.get('errors', [])) for r in st.session_state.results.values())
+        st.metric("Total Issues", total_errors)
     with col4:
         avg = 0
         if st.session_state.results:
             avg = sum(r.get('score', 0) for r in st.session_state.results.values()) / len(st.session_state.results)
         st.metric("Avg Score", f"{avg:.1f}/100")
     
-    if st.session_state.sites:
+    if st.session_state.results:
         df_data = []
-        for site in st.session_state.sites:
-            if site in st.session_state.results:
-                r = st.session_state.results[site]
-                df_data.append({
-                    'Site': site.replace('https://', ''),
-                    'Score': r.get('score', 0),
-                    'Errors': r.get('errors', 0),
-                    'Warnings': r.get('warnings', 0),
-                    'Words': r.get('total_words', 0),
-                    'Title': r.get('title', '')[:50],
-                    'Status': '✅ OK' if r.get('is_accessible') else '❌ Failed'
-                })
-            else:
-                df_data.append({
-                    'Site': site.replace('https://', ''),
-                    'Score': 'Pending',
-                    'Errors': '-',
-                    'Warnings': '-',
-                    'Words': '-',
-                    'Title': '-',
-                    'Status': '⏳ Pending'
-                })
+        for site, r in st.session_state.results.items():
+            df_data.append({
+                'Site': site.replace('https://', '')[:30],
+                'Score': r.get('score', 0),
+                'Errors': len(r.get('errors', [])),
+                'Warnings': len(r.get('warnings', [])),
+                'Words': r.get('total_words', 0),
+                'Title': r.get('title', '')[:30],
+                'Status': '✅' if r.get('is_accessible') else '❌'
+            })
         st.dataframe(pd.DataFrame(df_data), use_container_width=True, hide_index=True)
 
 with tab2:
     st.header("🔍 Run Full SEO Audit")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🚀 Audit All Sites", type="primary", use_container_width=True):
-            if st.session_state.sites:
-                progress = st.progress(0)
-                status = st.empty()
-                
-                total = len(st.session_state.sites)
-                successful = 0
-                failed = 0
-                
-                for i, url in enumerate(st.session_state.sites):
-                    status.text(f"Auditing {i+1}/{total}: {url}")
-                    result = complete_seo_audit(url)
-                    st.session_state.results[url] = result
-                    if result.get('is_accessible'):
-                        successful += 1
-                    else:
-                        failed += 1
-                    progress.progress((i + 1) / total)
-                    time.sleep(0.5)
-                
-                st.success(f"✅ Audit complete! {successful} successful, {failed} failed")
-                st.rerun()
-            else:
-                st.warning("No sites to audit. Add sites first!")
-    
-    with col2:
-        if st.button("🔄 Audit Failed Only", use_container_width=True):
-            failed_sites = [url for url, result in st.session_state.results.items() if not result.get('is_accessible')]
-            if failed_sites:
-                progress = st.progress(0)
-                status = st.empty()
-                total = len(failed_sites)
-                successful = 0
-                
-                for i, url in enumerate(failed_sites):
-                    status.text(f"Re-auditing {i+1}/{total}: {url}")
-                    result = complete_seo_audit(url)
-                    st.session_state.results[url] = result
-                    if result.get('is_accessible'):
-                        successful += 1
-                    progress.progress((i + 1) / total)
-                    time.sleep(0.5)
-                
-                st.success(f"✅ Re-audit complete! {successful} successful")
-                st.rerun()
-            else:
-                st.info("No failed sites to re-audit")
+    if st.button("🚀 Audit All Sites", type="primary"):
+        if st.session_state.sites:
+            progress = st.progress(0)
+            status = st.empty()
+            total = len(st.session_state.sites)
+            for i, url in enumerate(st.session_state.sites):
+                status.text(f"Auditing {i+1}/{total}: {url}")
+                result = complete_seo_audit(url)
+                st.session_state.results[url] = result
+                progress.progress((i + 1) / total)
+                time.sleep(0.5)
+            st.success("✅ Audit complete!")
+            st.rerun()
+        else:
+            st.warning("No sites to audit")
     
     if st.session_state.results:
-        st.subheader("📊 Audit Results")
-        
         for url, result in st.session_state.results.items():
             with st.expander(f"🔍 {url.replace('https://', '')}", expanded=False):
                 if not result.get('is_accessible'):
-                    st.error(f"❌ Failed to analyze: {result.get('error_message', 'Unknown error')}")
+                    st.error(f"❌ Failed to load: {result.get('errors', ['Unknown'])[0]}")
                     continue
-                
-                score = result.get('score', 0)
                 
                 col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
-                    st.metric("Score", f"{score}/100")
+                    st.metric("Score", f"{result.get('score', 0)}/100")
                 with col2:
-                    st.metric("Errors", result.get('errors', 0))
+                    st.metric("Errors", len(result.get('errors', [])))
                 with col3:
-                    st.metric("Warnings", result.get('warnings', 0))
+                    st.metric("Warnings", len(result.get('warnings', [])))
                 with col4:
                     st.metric("Status", result.get('status_code', 'N/A'))
                 with col5:
                     st.metric("Load Time", f"{result.get('response_time', 0)}s")
                 
                 st.markdown("---")
-                
-                # META TAGS
                 st.write("### 📝 Meta Tags")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -822,37 +680,23 @@ with tab2:
                 with col2:
                     st.write(f"**Description:** {result.get('meta_description', '')}")
                     st.write(f"**Description Length:** {result.get('meta_description_length', 0)} chars")
-                st.write(f"**Keywords:** {result.get('meta_keywords', '')}")
                 
                 st.markdown("---")
-                
-                # HEADINGS
                 st.write("### 📑 Headings")
                 col1, col2, col3, col4, col5, col6 = st.columns(6)
-                with col1:
-                    st.metric("H1", result.get('h1_count', 0))
-                with col2:
-                    st.metric("H2", result.get('h2_count', 0))
-                with col3:
-                    st.metric("H3", result.get('h3_count', 0))
-                with col4:
-                    st.metric("H4", result.get('h4_count', 0))
-                with col5:
-                    st.metric("H5", result.get('h5_count', 0))
-                with col6:
-                    st.metric("H6", result.get('h6_count', 0))
+                with col1: st.metric("H1", result.get('h1_count', 0))
+                with col2: st.metric("H2", result.get('h2_count', 0))
+                with col3: st.metric("H3", result.get('h3_count', 0))
+                with col4: st.metric("H4", result.get('h4_count', 0))
+                with col5: st.metric("H5", result.get('h5_count', 0))
+                with col6: st.metric("H6", result.get('h6_count', 0))
                 
                 st.markdown("---")
-                
-                # CONTENT
                 st.write("### 📄 Content")
                 col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Words", result.get('total_words', 0))
-                with col2:
-                    st.metric("Paragraphs", result.get('paragraph_count', 0))
-                with col3:
-                    st.metric("Sentences", result.get('sentence_count', 0))
+                with col1: st.metric("Words", result.get('total_words', 0))
+                with col2: st.metric("Paragraphs", result.get('paragraph_count', 0))
+                with col3: st.metric("Readability", f"{result.get('readability_score', 0)}%")
                 
                 if result.get('top_keywords'):
                     st.write("**Top Keywords:**")
@@ -860,126 +704,104 @@ with tab2:
                     st.write(keywords_str)
                 
                 st.markdown("---")
-                
-                # LINKS
                 st.write("### 🔗 Links")
                 col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.metric("Total", result.get('total_links', 0))
-                with col2:
-                    st.metric("Internal", result.get('internal_links', 0))
-                with col3:
-                    st.metric("External", result.get('external_links', 0))
-                with col4:
-                    st.metric("Nofollow", result.get('nofollow_links', 0))
-                with col5:
-                    st.metric("Broken", result.get('broken_links', 0))
+                with col1: st.metric("Total", result.get('total_links', 0))
+                with col2: st.metric("Internal", result.get('internal_links', 0))
+                with col3: st.metric("External", result.get('external_links', 0))
+                with col4: st.metric("Nofollow", result.get('nofollow_links', 0))
+                with col5: st.metric("Broken", result.get('broken_links_count', 0))
+                
+                if result.get('broken_links'):
+                    st.warning("⚠️ Broken Links:")
+                    for bl in result['broken_links'][:5]:
+                        st.write(f"- {bl['url']} (Status: {bl['status']})")
                 
                 st.markdown("---")
-                
-                # IMAGES
                 st.write("### 🖼️ Images")
                 col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total", result.get('total_images', 0))
-                with col2:
-                    st.metric("With Alt", result.get('images_with_alt', 0))
-                with col3:
-                    st.metric("Missing Alt", result.get('images_without_alt', 0))
+                with col1: st.metric("Total", result.get('total_images', 0))
+                with col2: st.metric("With Alt", result.get('images_with_alt', 0))
+                with col3: st.metric("Missing Alt", result.get('images_without_alt', 0))
+                
+                if result.get('missing_alt_list'):
+                    st.warning("⚠️ Images missing alt text:")
+                    for img in result['missing_alt_list'][:5]:
+                        st.write(f"- {img}")
                 
                 st.markdown("---")
-                
-                # SCHEMA
-                st.write("### 🏷️ Schema Markup")
-                if result.get('has_schema'):
-                    st.success(f"✅ Schema: **{result.get('schema_types', '')}**")
-                else:
-                    st.warning("⚠️ No schema found")
-                
-                st.markdown("---")
-                
-                # OPEN GRAPH
-                st.write("### 📱 Open Graph")
-                if result.get('has_og'):
-                    st.success("✅ Open Graph tags present")
-                    st.write(f"**Title:** {result.get('og_title', '')}")
-                    st.write(f"**Description:** {result.get('og_description', '')[:100]}...")
-                else:
-                    st.warning("⚠️ Missing Open Graph tags")
-                
-                st.markdown("---")
-                
-                # TWITTER
-                st.write("### 🐦 Twitter Cards")
-                if result.get('has_twitter'):
-                    st.success("✅ Twitter Card tags present")
-                    st.write(f"**Card:** {result.get('twitter_card', '')}")
-                    st.write(f"**Title:** {result.get('twitter_title', '')}")
-                else:
-                    st.warning("⚠️ Missing Twitter Card tags")
-                
-                st.markdown("---")
-                
-                # TECHNICAL
-                st.write("### ⚙️ Technical SEO")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("SSL", "✅" if result.get('has_ssl') else "❌")
-                with col2:
-                    st.metric("Viewport", "✅" if result.get('has_viewport') else "❌")
-                with col3:
-                    st.metric("Canonical", "✅" if result.get('has_canonical') else "❌")
-                with col4:
-                    st.metric("Language", result.get('language', '❌'))
-                
-                st.markdown("---")
-                
-                # PERFORMANCE
-                st.write("### 🚀 Performance")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("CSS", result.get('css_count', 0))
-                with col2:
-                    st.metric("JS", result.get('js_count', 0))
-                with col3:
-                    st.metric("Lazy Loading", "✅" if result.get('has_lazy_loading') else "❌")
-                
-                st.markdown("---")
-                
-                # SECURITY
-                st.write("### 🔒 Security")
+                st.write("### 🏷️ Schema & Social")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("SSL", "✅" if result.get('has_ssl') else "❌")
+                    if result.get('has_schema'):
+                        st.success(f"✅ Schema: {', '.join(result.get('schema_types', []))}")
+                    else:
+                        st.warning("⚠️ No schema")
                 with col2:
-                    st.metric("Mixed Content", "⚠️" if result.get('has_mixed_content') else "✅")
-                
-                st.markdown("---")
-                
-                # MOBILE
-                st.write("### 📱 Mobile Friendly")
-                if result.get('is_mobile_friendly'):
-                    st.success("✅ Mobile friendly")
-                else:
-                    st.error("❌ Not mobile friendly")
-                
-                # ISSUES
-                if result.get('successes'):
-                    st.write("### ✅ Successes")
-                    for s in result['successes'][:10]:
-                        st.success(s)
-                    if len(result['successes']) > 10:
-                        st.info(f"... and {len(result['successes']) - 10} more")
-                
-                if result.get('all_issues'):
-                    st.write("### ⚠️ Issues")
-                    for issue in result['all_issues']:
-                        if '❌' in issue:
-                            st.error(issue)
-                        elif '⚠️' in issue:
-                            st.warning(issue)
+                    if result.get('has_og'):
+                        st.success("✅ Open Graph")
+                    else:
+                        st.warning("⚠️ No OG tags")
 
 with tab3:
+    st.header("⚡ Optimization Checker")
+    st.markdown("**Find issues that need optimization and get actionable suggestions**")
+    
+    if st.session_state.results:
+        for url, result in st.session_state.results.items():
+            if result.get('is_accessible'):
+                with st.expander(f"🔧 {url.replace('https://', '')}", expanded=True):
+                    score = result.get('score', 0)
+                    
+                    if score >= 85:
+                        st.success(f"⭐ EXCELLENT: {score}/100")
+                    elif score >= 70:
+                        st.success(f"🟢 GOOD: {score}/100")
+                    elif score >= 50:
+                        st.warning(f"🟡 AVERAGE: {score}/100")
+                    else:
+                        st.error(f"🔴 POOR: {score}/100")
+                    
+                    st.markdown("---")
+                    
+                    if result.get('severity'):
+                        for s in result['severity']:
+                            st.write(f"**{s}**")
+                    
+                    st.markdown("---")
+                    
+                    if result.get('errors'):
+                        st.error("### ❌ Critical Issues To Fix")
+                        for err in result['errors'][:10]:
+                            st.write(f"- {err}")
+                    
+                    if result.get('warnings'):
+                        st.warning("### ⚠️ Warnings To Address")
+                        for warn in result['warnings'][:10]:
+                            st.write(f"- {warn}")
+                    
+                    if result.get('optimizations'):
+                        st.info("### 📝 Optimization Suggestions")
+                        for opt in result['optimizations'][:10]:
+                            st.write(f"- {opt}")
+                    
+                    st.markdown("---")
+                    st.write("### 📊 Score Breakdown")
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Meta", f"{result.get('meta_score', 0)}%")
+                    with col2:
+                        st.metric("Content", f"{result.get('content_score', 0)}%")
+                    with col3:
+                        st.metric("Links", f"{result.get('link_score', 0)}%")
+                    with col4:
+                        st.metric("Images", f"{result.get('image_score', 0)}%")
+                    with col5:
+                        st.metric("Technical", f"{result.get('technical_score', 0)}%")
+    else:
+        st.info("Run an SEO audit first to get optimization suggestions")
+
+with tab4:
     st.header("📈 Reports")
     
     if st.session_state.results:
@@ -988,24 +810,25 @@ with tab3:
             data.append({
                 'Site': url.replace('https://', ''),
                 'Score': result.get('score', 0),
-                'Errors': result.get('errors', 0),
-                'Warnings': result.get('warnings', 0),
-                'Title': result.get('title', '')[:50],
-                'Description': result.get('meta_description', '')[:100],
-                'Total Words': result.get('total_words', 0),
+                'Errors': len(result.get('errors', [])),
+                'Warnings': len(result.get('warnings', [])),
+                'Meta Score': result.get('meta_score', 0),
+                'Content Score': result.get('content_score', 0),
+                'Link Score': result.get('link_score', 0),
+                'Image Score': result.get('image_score', 0),
+                'Technical Score': result.get('technical_score', 0),
+                'Words': result.get('total_words', 0),
+                'Title': result.get('title', '')[:40],
                 'Internal Links': result.get('internal_links', 0),
                 'External Links': result.get('external_links', 0),
-                'Broken Links': result.get('broken_links', 0),
+                'Broken Links': result.get('broken_links_count', 0),
+                'Images': result.get('total_images', 0),
                 'Images with Alt': result.get('images_with_alt', 0),
-                'Schema': result.get('schema_types', 'No Schema'),
-                'Open Graph': result.get('og_title', 'No OG')[:30],
-                'Twitter': result.get('twitter_title', 'No Twitter')[:30],
-                'SSL': '✅' if result.get('has_ssl') else '❌',
+                'Schema': '✅' if result.get('has_schema') else '❌',
+                'OG Tags': '✅' if result.get('has_og') else '❌',
                 'Mobile Friendly': '✅' if result.get('is_mobile_friendly') else '❌',
-                'Mixed Content': '⚠️' if result.get('has_mixed_content') else '✅',
-                'Lazy Loading': '✅' if result.get('has_lazy_loading') else '❌',
-                'Accessible': '✅' if result.get('is_accessible') else '❌',
-                'Response Time': f"{result.get('response_time', 0)}s"
+                'SSL': '✅' if result.get('has_ssl') else '❌',
+                'Accessible': '✅' if result.get('is_accessible') else '❌'
             })
         
         df = pd.DataFrame(data)
@@ -1024,15 +847,16 @@ with tab3:
             )
         
         with col2:
-            st.write("**Summary Statistics:**")
-            st.write(f"- Average Score: {df['Score'].mean():.1f}/100")
+            st.write("**📊 Summary Statistics:**")
             st.write(f"- Total Sites: {len(df)}")
+            st.write(f"- Average Score: {df['Score'].mean():.1f}/100")
             st.write(f"- Sites with Errors: {df[df['Errors'] > 0].shape[0]}")
-            st.write(f"- Average Words: {df['Total Words'].mean():.0f}")
+            st.write(f"- Average Words: {df['Words'].mean():.0f}")
+            st.write(f"- Total Broken Links: {df['Broken Links'].sum()}")
     else:
         st.info("Run an SEO audit first to generate reports")
 
 st.markdown("---")
 st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 st.caption(f"📊 Total Sites: {len(st.session_state.sites)} | Audited: {len(st.session_state.results)}")
-st.caption("🚀 Complete SEO Audit | All 50+ Metrics | Real Data")
+st.caption("🚀 Complete SEO Audit + Optimization Checker | All 50+ Metrics")
