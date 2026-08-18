@@ -59,6 +59,94 @@ def get_page_content(url):
             continue
     return "", 0
 
+# ============ CHECK IF IMAGE IS CONTENT IMAGE ============
+def is_content_image(img):
+    """Check if an image is a content image (not icon/logo/button)"""
+    
+    # Get image attributes
+    src = img.get('src', '').lower()
+    alt = img.get('alt', '').lower()
+    cls = img.get('class', [])
+    if isinstance(cls, str):
+        cls = [cls]
+    cls_str = ' '.join(cls).lower()
+    width = img.get('width', '')
+    height = img.get('height', '')
+    
+    # Skip if it's an icon (small images)
+    try:
+        if width and int(width) < 50:
+            return False
+        if height and int(height) < 50:
+            return False
+    except:
+        pass
+    
+    # Skip icon file types
+    icon_patterns = ['icon', 'logo-small', 'favicon', 'svg', 'social', 'share', 'btn', 'button', 'arrow', 'banner-small']
+    for pattern in icon_patterns:
+        if pattern in src or pattern in cls_str:
+            return False
+    
+    # Skip common icon classes
+    icon_classes = ['icon', 'fa-', 'fas', 'far', 'fab', 'glyphicon', 'material-icons', 'svg-icon', 'social-icon']
+    for cls_name in icon_classes:
+        if cls_name in cls_str:
+            return False
+    
+    # Check if alt text indicates it's an icon
+    icon_alt_patterns = ['icon', 'logo', 'button', 'btn', 'share', 'social', 'arrow', 'menu', 'hamburger']
+    for pattern in icon_alt_patterns:
+        if pattern in alt:
+            return False
+    
+    # Check if it's a logo
+    if 'logo' in src or 'logo' in alt or 'logo' in cls_str:
+        return False
+    
+    # Check if it's in a content area (article, main, section)
+    parent = img.parent
+    for _ in range(3):  # Check up to 3 levels up
+        if parent:
+            parent_name = parent.name if parent.name else ''
+            parent_class = ' '.join(parent.get('class', [])).lower() if parent.get('class') else ''
+            if 'article' in parent_name or 'content' in parent_name or 'post' in parent_name:
+                return True
+            if 'article' in parent_class or 'content' in parent_class or 'post' in parent_class:
+                return True
+            parent = parent.parent
+        else:
+            break
+    
+    # If image has meaningful alt text (longer than 3 chars) and not in header/footer
+    if len(alt) > 3:
+        # Check if not in header/footer
+        parent = img.parent
+        for _ in range(3):
+            if parent:
+                parent_name = parent.name if parent.name else ''
+                parent_class = ' '.join(parent.get('class', [])).lower() if parent.get('class') else ''
+                if 'header' in parent_name or 'footer' in parent_name or 'nav' in parent_name:
+                    return False
+                if 'header' in parent_class or 'footer' in parent_class or 'nav' in parent_class:
+                    return False
+                parent = parent.parent
+            else:
+                break
+        return True
+    
+    # Default: if it's in a paragraph, it's likely content
+    parent = img.parent
+    for _ in range(3):
+        if parent and parent.name == 'p':
+            return True
+        if parent:
+            parent = parent.parent
+        else:
+            break
+    
+    return False
+
 # ============ COMPLETE SEO AUDIT ============
 def complete_seo_audit(url):
     result = {
@@ -98,8 +186,12 @@ def complete_seo_audit(url):
         'broken_links_count': 0,
         'anchor_texts': [],
         'total_images': 0,
+        'content_images': 0,
+        'icon_images': 0,
         'images_with_alt': 0,
         'images_without_alt': 0,
+        'content_images_with_alt': 0,
+        'content_images_without_alt': 0,
         'missing_alt_list': [],
         'has_schema': False,
         'schema_types': [],
@@ -191,12 +283,6 @@ def complete_seo_audit(url):
         else:
             result['errors'].append("Missing meta description")
             result['optimizations'].append("Add a meta description with key information")
-        
-        # Meta Keywords
-        meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
-        if meta_keywords:
-            result['meta_keywords'] = meta_keywords.get('content', '')
-            result['successes'].append("Meta keywords present")
         
         # ===== HEADINGS =====
         h1_tags = soup.find_all('h1')
@@ -352,36 +438,71 @@ def complete_seo_audit(url):
             else:
                 result['successes'].append("No broken links detected")
         
-        # ===== IMAGES =====
-        images = soup.find_all('img')
-        result['total_images'] = len(images)
+        # ===== IMAGES - FIXED: Only count content images =====
+        all_images = soup.find_all('img')
+        result['total_images'] = len(all_images)
         
-        with_alt = 0
-        without_alt = 0
+        content_images = []
+        icon_images = []
+        content_with_alt = 0
+        content_without_alt = 0
+        all_with_alt = 0
+        all_without_alt = 0
         missing_alt_list = []
         
-        for img in images:
+        for img in all_images:
             alt = img.get('alt', '').strip()
+            
+            # Count all images with/without alt
             if alt:
-                with_alt += 1
+                all_with_alt += 1
             else:
-                without_alt += 1
-                src = img.get('src', '')
-                if src:
-                    missing_alt_list.append(src[:60])
+                all_without_alt += 1
+            
+            # Check if it's a content image
+            if is_content_image(img):
+                content_images.append(img)
+                if alt:
+                    content_with_alt += 1
+                else:
+                    content_without_alt += 1
+                    src = img.get('src', '')
+                    if src:
+                        missing_alt_list.append(f"Content image missing alt: {src[:60]}")
+            else:
+                icon_images.append(img)
         
-        result['images_with_alt'] = with_alt
-        result['images_without_alt'] = without_alt
+        result['content_images'] = len(content_images)
+        result['icon_images'] = len(icon_images)
+        result['images_with_alt'] = all_with_alt
+        result['images_without_alt'] = all_without_alt
+        result['content_images_with_alt'] = content_with_alt
+        result['content_images_without_alt'] = content_without_alt
         result['missing_alt_list'] = missing_alt_list[:10]
         
-        if result['total_images'] > 0:
-            if without_alt == 0:
-                result['successes'].append(f"All {result['total_images']} images have alt text")
+        # Image SEO scoring (based on CONTENT images only)
+        if result['content_images'] > 0:
+            alt_percentage = (content_with_alt / result['content_images']) * 100
+            if alt_percentage == 100:
+                result['successes'].append(f"All {result['content_images']} content images have alt text")
+                result['image_score'] += 20
+            elif alt_percentage >= 80:
+                result['successes'].append(f"{content_with_alt}/{result['content_images']} content images have alt text")
                 result['image_score'] += 15
+                result['warnings'].append(f"{content_without_alt} content images missing alt text")
+                result['optimizations'].append("Add alt text to content images")
             else:
-                result['warnings'].append(f"{without_alt} images missing alt text")
-                result['optimizations'].append("Add alt text to all images")
+                result['warnings'].append(f"Only {content_with_alt}/{result['content_images']} content images have alt text")
+                result['optimizations'].append("Add alt text to all content images")
                 result['image_score'] += 5
+        else:
+            result['successes'].append("No content images found (or all are icons)")
+            result['image_score'] += 10
+        
+        # Warn about too many icon images
+        if result['icon_images'] > 20:
+            result['warnings'].append(f"{result['icon_images']} icon images detected - consider using CSS/icon fonts instead")
+            result['optimizations'].append("Replace decorative icons with CSS or SVG sprites")
         
         # ===== SCHEMA =====
         schema_scripts = soup.find_all('script', attrs={'type': 'application/ld+json'})
@@ -629,6 +750,7 @@ with tab1:
                 'Errors': len(r.get('errors', [])),
                 'Warnings': len(r.get('warnings', [])),
                 'Words': r.get('total_words', 0),
+                'Content Images': r.get('content_images', 0),
                 'Title': r.get('title', '')[:30],
                 'Status': '✅' if r.get('is_accessible') else '❌'
             })
@@ -719,13 +841,14 @@ with tab2:
                 
                 st.markdown("---")
                 st.write("### 🖼️ Images")
-                col1, col2, col3 = st.columns(3)
-                with col1: st.metric("Total", result.get('total_images', 0))
-                with col2: st.metric("With Alt", result.get('images_with_alt', 0))
-                with col3: st.metric("Missing Alt", result.get('images_without_alt', 0))
+                col1, col2, col3, col4 = st.columns(4)
+                with col1: st.metric("Total Images", result.get('total_images', 0))
+                with col2: st.metric("Content Images", result.get('content_images', 0))
+                with col3: st.metric("Icon Images", result.get('icon_images', 0))
+                with col4: st.metric("Content with Alt", f"{result.get('content_images_with_alt', 0)}/{result.get('content_images', 0)}")
                 
                 if result.get('missing_alt_list'):
-                    st.warning("⚠️ Images missing alt text:")
+                    st.warning("⚠️ Content images missing alt text:")
                     for img in result['missing_alt_list'][:5]:
                         st.write(f"- {img}")
                 
@@ -822,8 +945,10 @@ with tab4:
                 'Internal Links': result.get('internal_links', 0),
                 'External Links': result.get('external_links', 0),
                 'Broken Links': result.get('broken_links_count', 0),
-                'Images': result.get('total_images', 0),
-                'Images with Alt': result.get('images_with_alt', 0),
+                'Total Images': result.get('total_images', 0),
+                'Content Images': result.get('content_images', 0),
+                'Icon Images': result.get('icon_images', 0),
+                'Content Images with Alt': result.get('content_images_with_alt', 0),
                 'Schema': '✅' if result.get('has_schema') else '❌',
                 'OG Tags': '✅' if result.get('has_og') else '❌',
                 'Mobile Friendly': '✅' if result.get('is_mobile_friendly') else '❌',
@@ -853,6 +978,7 @@ with tab4:
             st.write(f"- Sites with Errors: {df[df['Errors'] > 0].shape[0]}")
             st.write(f"- Average Words: {df['Words'].mean():.0f}")
             st.write(f"- Total Broken Links: {df['Broken Links'].sum()}")
+            st.write(f"- Total Content Images: {df['Content Images'].sum()}")
     else:
         st.info("Run an SEO audit first to generate reports")
 
