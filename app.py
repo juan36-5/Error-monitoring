@@ -27,7 +27,8 @@ try:
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
-    st.warning("⚠️ Selenium not installed. Install with: pip install selenium webdriver-manager")
+
+st.set_page_config(page_title="Complete SEO Audit", page_icon="🔍", layout="wide")
 
 # ============ USER AGENTS ============
 USER_AGENTS = [
@@ -55,60 +56,85 @@ def get_random_headers():
         'DNT': '1'
     }
 
-st.set_page_config(page_title="Complete SEO Audit", page_icon="🔍", layout="wide")
-
 # ============ SESSION STATE ============
 if 'sites' not in st.session_state:
     st.session_state.sites = []
 if 'results' not in st.session_state:
     st.session_state.results = {}
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = False
 
 # ============ GET PAGE CONTENT FUNCTION ============
 def get_page_content(url):
-    """Try multiple methods to get page content - Selenium + Requests fallback"""
+    """Try multiple methods to get page content"""
     
-    # Method 1: Try Selenium (for Cloudflare bypass)
+    # Clean URL
+    if not url.startswith('http'):
+        url = 'https://' + url
+    
+    # Try requests with rotating user agents
+    for attempt in range(5):
+        try:
+            headers = get_random_headers()
+            session = requests.Session()
+            response = session.get(
+                url, 
+                timeout=25, 
+                headers=headers, 
+                allow_redirects=True, 
+                verify=False
+            )
+            
+            if response.status_code == 200 and len(response.text) > 1000:
+                return response.text, response.status_code
+            elif response.status_code == 200:
+                # Got content but might be minimal, try Selenium
+                if SELENIUM_AVAILABLE:
+                    return selenium_get_content(url)
+                    
+        except Exception as e:
+            print(f"Request attempt {attempt + 1} failed: {e}")
+            time.sleep(random.uniform(1, 3))
+            continue
+    
+    # Try Selenium as fallback
     if SELENIUM_AVAILABLE:
         try:
-            options = Options()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--window-size=1920,1080')
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_experimental_option('excludeSwitches', ['enable-logging'])
-            options.add_experimental_option('useAutomationExtension', False)
-            
-            try:
-                driver = webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()),
-                    options=options
-                )
-            except:
-                driver = webdriver.Chrome(options=options)
-            
-            driver.get(url)
-            time.sleep(5)
-            html = driver.page_source
-            driver.quit()
-            if html and len(html) > 1000:
-                return html, 200
+            return selenium_get_content(url)
         except Exception as e:
             print(f"Selenium failed: {e}")
     
-    # Method 2: Try regular requests with rotating user agents
-    for attempt in range(3):
+    return "", 0
+
+def selenium_get_content(url):
+    """Get content using Selenium"""
+    try:
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
         try:
-            headers = get_random_headers()
-            time.sleep(random.uniform(0.5, 1.5))
-            response = requests.get(url, timeout=25, headers=headers, allow_redirects=True, verify=False)
-            if response.status_code == 200 and len(response.text) > 1000:
-                return response.text, response.status_code
-            elif response.status_code != 403:
-                return response.text, response.status_code
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
         except:
-            continue
+            driver = webdriver.Chrome(options=options)
+        
+        driver.get(url)
+        time.sleep(8)  # Wait for JavaScript
+        html = driver.page_source
+        driver.quit()
+        
+        if html and len(html) > 1000:
+            return html, 200
+        
+    except Exception as e:
+        print(f"Selenium error: {e}")
     
     return "", 0
 
@@ -129,14 +155,14 @@ def complete_seo_audit(url):
         'response_time': 0,
         'page_size': 0,
         
-        # ===== META TAGS =====
+        # META TAGS
         'title': '',
         'title_length': 0,
         'meta_description': '',
         'meta_description_length': 0,
         'meta_keywords': '',
         
-        # ===== HEADINGS =====
+        # HEADINGS
         'h1_count': 0,
         'h1_text': '',
         'h2_count': 0,
@@ -146,40 +172,40 @@ def complete_seo_audit(url):
         'h6_count': 0,
         'all_headings': [],
         
-        # ===== CONTENT =====
+        # CONTENT
         'total_words': 0,
         'paragraph_count': 0,
         'sentence_count': 0,
         'top_keywords': [],
         
-        # ===== LINKS =====
+        # LINKS
         'total_links': 0,
         'internal_links': 0,
         'external_links': 0,
         'nofollow_links': 0,
         'broken_links': 0,
         
-        # ===== IMAGES =====
+        # IMAGES
         'total_images': 0,
         'images_with_alt': 0,
         'images_without_alt': 0,
         
-        # ===== SCHEMA =====
+        # SCHEMA
         'has_schema': False,
         'schema_types': '',
         
-        # ===== OPEN GRAPH =====
+        # OPEN GRAPH
         'has_og': False,
         'og_title': '',
         'og_description': '',
         'og_image': '',
         
-        # ===== TWITTER CARDS =====
+        # TWITTER CARDS
         'has_twitter': False,
         'twitter_title': '',
         'twitter_card': '',
         
-        # ===== TECHNICAL =====
+        # TECHNICAL
         'has_ssl': False,
         'has_viewport': False,
         'has_canonical': False,
@@ -189,12 +215,12 @@ def complete_seo_audit(url):
         'has_robots': False,
         'robots_content': '',
         
-        # ===== PERFORMANCE =====
+        # PERFORMANCE
         'css_count': 0,
         'js_count': 0,
         'has_lazy_loading': False,
         
-        # ===== SECURITY =====
+        # SECURITY
         'has_mixed_content': False,
         'is_mobile_friendly': False
     }
@@ -230,8 +256,15 @@ def complete_seo_audit(url):
             result['title_length'] = len(title.text.strip())
             result['successes'].append(f"✅ Title found: {result['title_length']} chars")
         else:
-            result['all_issues'].append("❌ Missing title tag")
-            result['errors'] += 1
+            # Try OG title as fallback
+            og_title = soup.find('meta', attrs={'property': 'og:title'})
+            if og_title and og_title.get('content'):
+                result['title'] = og_title.get('content')
+                result['title_length'] = len(result['title'])
+                result['successes'].append(f"✅ Title from OG: {result['title_length']} chars")
+            else:
+                result['all_issues'].append("❌ Missing title tag")
+                result['errors'] += 1
         
         meta_desc = soup.find('meta', attrs={'name': 'description'})
         if meta_desc:
@@ -241,11 +274,25 @@ def complete_seo_audit(url):
                 result['meta_description_length'] = len(desc_content)
                 result['successes'].append(f"✅ Description found: {result['meta_description_length']} chars")
             else:
-                result['all_issues'].append("⚠️ Description is empty")
-                result['warnings'] += 1
+                # Try OG description
+                og_desc = soup.find('meta', attrs={'property': 'og:description'})
+                if og_desc and og_desc.get('content'):
+                    result['meta_description'] = og_desc.get('content')
+                    result['meta_description_length'] = len(result['meta_description'])
+                    result['successes'].append(f"✅ Description from OG: {result['meta_description_length']} chars")
+                else:
+                    result['all_issues'].append("⚠️ Description is empty")
+                    result['warnings'] += 1
         else:
-            result['all_issues'].append("❌ Missing meta description")
-            result['errors'] += 1
+            # Try OG description
+            og_desc = soup.find('meta', attrs={'property': 'og:description'})
+            if og_desc and og_desc.get('content'):
+                result['meta_description'] = og_desc.get('content')
+                result['meta_description_length'] = len(result['meta_description'])
+                result['successes'].append(f"✅ Description from OG: {result['meta_description_length']} chars")
+            else:
+                result['all_issues'].append("❌ Missing meta description")
+                result['errors'] += 1
         
         meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
         if meta_keywords:
@@ -257,6 +304,14 @@ def complete_seo_audit(url):
         result['h1_count'] = len(h1_tags)
         if h1_tags and h1_tags[0].text.strip():
             result['h1_text'] = h1_tags[0].text.strip()
+            if len(h1_tags) == 1:
+                result['successes'].append(f"✅ Single H1: {result['h1_text'][:50]}")
+            else:
+                result['all_issues'].append(f"⚠️ Multiple H1 tags: {len(h1_tags)} found")
+                result['warnings'] += 1
+        else:
+            result['all_issues'].append("⚠️ No H1 heading found")
+            result['warnings'] += 1
         
         result['h2_count'] = len(soup.find_all('h2'))
         result['h3_count'] = len(soup.find_all('h3'))
@@ -271,6 +326,12 @@ def complete_seo_audit(url):
         text = soup.get_text(separator=' ', strip=True)
         words = re.findall(r'\b[a-zA-Z0-9]+(?:\'[a-zA-Z]+)?\b', text)
         result['total_words'] = len(words)
+        
+        if result['total_words'] > 300:
+            result['successes'].append(f"✅ Good content: {result['total_words']} words")
+        else:
+            result['all_issues'].append(f"⚠️ Thin content: {result['total_words']} words")
+            result['warnings'] += 1
         
         paragraphs = soup.find_all('p')
         result['paragraph_count'] = len(paragraphs)
@@ -299,29 +360,45 @@ def complete_seo_audit(url):
             if 'nofollow' in rel:
                 nofollow += 1
             
-            if href.startswith('http'):
-                if urlparse(href).netloc == base_domain:
+            if href:
+                if href.startswith('http'):
+                    if urlparse(href).netloc == base_domain or urlparse(href).netloc == '':
+                        internal += 1
+                    else:
+                        external += 1
+                elif href.startswith('/') or href.startswith('#'):
                     internal += 1
-                else:
-                    external += 1
-            elif href.startswith('/') or href.startswith('#'):
-                internal += 1
+                elif href.startswith('//'):
+                    # Protocol relative URL
+                    if urlparse('https:' + href).netloc == base_domain:
+                        internal += 1
+                    else:
+                        external += 1
         
         result['internal_links'] = internal
         result['external_links'] = external
         result['nofollow_links'] = nofollow
         
+        if result['total_links'] > 0:
+            result['successes'].append(f"✅ {result['total_links']} links found ({internal} internal, {external} external)")
+        else:
+            result['all_issues'].append("⚠️ No links found")
+            result['warnings'] += 1
+        
         # Broken links check
         broken = 0
-        for link in all_links[:15]:
+        checked = 0
+        for link in all_links[:10]:
             href = link.get('href', '')
-            if href.startswith('http'):
+            if href and href.startswith('http'):
                 try:
-                    resp = requests.head(href, timeout=3, allow_redirects=True)
+                    resp = requests.head(href, timeout=3, allow_redirects=True, verify=False)
                     if resp.status_code >= 400:
                         broken += 1
+                    checked += 1
                 except:
                     broken += 1
+                    checked += 1
         result['broken_links'] = broken
         
         # ===== IMAGES =====
@@ -332,13 +409,20 @@ def complete_seo_audit(url):
         without_alt = 0
         
         for img in images:
-            if img.get('alt', '').strip():
+            alt = img.get('alt', '').strip()
+            if alt:
                 with_alt += 1
             else:
                 without_alt += 1
         
         result['images_with_alt'] = with_alt
         result['images_without_alt'] = without_alt
+        
+        if result['total_images'] > 0:
+            result['successes'].append(f"✅ {result['total_images']} images found ({with_alt} with alt text)")
+        if without_alt > 0:
+            result['all_issues'].append(f"⚠️ {without_alt} images missing alt text")
+            result['warnings'] += 1
         
         # ===== SCHEMA =====
         schema_scripts = soup.find_all('script', attrs={'type': 'application/ld+json'})
@@ -347,14 +431,26 @@ def complete_seo_audit(url):
             schema_list = []
             for script in schema_scripts:
                 try:
-                    data = json.loads(script.string)
-                    if isinstance(data, dict):
-                        schema_type = data.get('@type', 'Unknown')
-                        schema_list.append(schema_type)
+                    if script.string:
+                        data = json.loads(script.string)
+                        if isinstance(data, dict):
+                            schema_type = data.get('@type', 'Unknown')
+                            if schema_type:
+                                schema_list.append(schema_type)
+                        elif isinstance(data, list):
+                            for item in data:
+                                if isinstance(item, dict):
+                                    schema_type = item.get('@type', 'Unknown')
+                                    if schema_type:
+                                        schema_list.append(schema_type)
                 except:
                     pass
-            result['schema_types'] = ', '.join(schema_list[:3])
-            result['successes'].append(f"✅ Schema found: {result['schema_types']}")
+            if schema_list:
+                result['schema_types'] = ', '.join(list(set(schema_list))[:3])
+                result['successes'].append(f"✅ Schema found: {result['schema_types']}")
+            else:
+                result['all_issues'].append("⚠️ Schema present but invalid")
+                result['warnings'] += 1
         else:
             result['all_issues'].append("⚠️ No schema markup found")
             result['warnings'] += 1
@@ -406,10 +502,10 @@ def complete_seo_audit(url):
             result['all_issues'].append("⚠️ No canonical tag found")
             result['warnings'] += 1
         
-        html = soup.find('html')
-        if html and html.get('lang'):
+        html_tag = soup.find('html')
+        if html_tag and html_tag.get('lang'):
             result['has_language'] = True
-            result['language'] = html.get('lang')
+            result['language'] = html_tag.get('lang')
             result['successes'].append(f"✅ Language: {result['language']}")
         else:
             result['all_issues'].append("⚠️ No language attribute")
@@ -419,6 +515,7 @@ def complete_seo_audit(url):
         if robots:
             result['has_robots'] = True
             result['robots_content'] = robots.get('content', '')
+            result['successes'].append(f"✅ Robots: {result['robots_content']}")
         
         # ===== PERFORMANCE =====
         result['css_count'] = len(soup.find_all('link', rel='stylesheet'))
@@ -435,6 +532,8 @@ def complete_seo_audit(url):
             src = script.get('src', '')
             if src.startswith('http://') and url.startswith('https://'):
                 result['has_mixed_content'] = True
+                result['all_issues'].append("⚠️ Mixed content detected")
+                result['warnings'] += 1
                 break
         
         # ===== CALCULATE SCORE =====
@@ -442,6 +541,7 @@ def complete_seo_audit(url):
         score -= result['errors'] * 5
         score -= result['warnings'] * 2
         
+        # Bonus points
         if result['title'] and 30 <= result['title_length'] <= 60:
             score += 3
         if result['meta_description'] and 50 <= result['meta_description_length'] <= 160:
@@ -469,25 +569,35 @@ def complete_seo_audit(url):
         result['error_message'] = str(e)
         result['all_issues'].append(f"❌ Error: {str(e)}")
         result['errors'] += 1
+        result['is_accessible'] = False
     
     return result
 
 # ============ AUTO IMPORT SITES ============
 def auto_import_sites():
-    if os.path.exists('sites.txt') and not st.session_state.sites:
+    if not os.path.exists('sites.txt'):
+        with open('sites.txt', 'w') as f:
+            f.write("https://google.com\n")
+            f.write("https://github.com\n")
+            f.write("https://wikipedia.org\n")
+            f.write("https://stackoverflow.com\n")
+            f.write("https://bbc.com\n")
+    
+    if not st.session_state.initialized:
         try:
             with open('sites.txt', 'r') as f:
                 for line in f:
                     url = line.strip()
-                    if url and not url.startswith('#') and not url.startswith('import'):
+                    if url and not url.startswith('#'):
                         if not url.startswith('http'):
                             url = 'https://' + url
                         if url not in st.session_state.sites:
                             st.session_state.sites.append(url)
             if st.session_state.sites:
                 st.success(f"✅ Auto-imported {len(st.session_state.sites)} sites!")
-        except:
-            pass
+            st.session_state.initialized = True
+        except Exception as e:
+            st.error(f"Error importing sites: {e}")
 
 auto_import_sites()
 
@@ -503,19 +613,38 @@ with st.sidebar:
     st.markdown("---")
     
     new_url = st.text_input("➕ Add Site", placeholder="example.com")
-    if st.button("Add Site", use_container_width=True):
-        if new_url:
-            if not new_url.startswith('http'):
-                new_url = 'https://' + new_url
-            if new_url not in st.session_state.sites:
-                st.session_state.sites.append(new_url)
-                st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Add Site", use_container_width=True):
+            if new_url:
+                if not new_url.startswith('http'):
+                    new_url = 'https://' + new_url
+                if new_url not in st.session_state.sites:
+                    st.session_state.sites.append(new_url)
+                    # Save to file
+                    with open('sites.txt', 'a') as f:
+                        f.write(f"\n{new_url}")
+                    st.rerun()
+    with col2:
+        if st.button("Add Test Sites", use_container_width=True):
+            test_sites = [
+                "https://google.com",
+                "https://github.com", 
+                "https://wikipedia.org",
+                "https://stackoverflow.com",
+                "https://bbc.com"
+            ]
+            for site in test_sites:
+                if site not in st.session_state.sites:
+                    st.session_state.sites.append(site)
+            st.rerun()
     
     st.markdown("---")
     
     if st.button("🧹 Clear All", use_container_width=True):
         st.session_state.sites = []
         st.session_state.results = {}
+        st.session_state.initialized = False
         st.rerun()
     
     st.markdown("---")
@@ -580,29 +709,55 @@ with tab1:
 with tab2:
     st.header("🔍 Run Full SEO Audit")
     
-    if st.button("🚀 Audit All Sites", type="primary"):
-        if st.session_state.sites:
-            progress = st.progress(0)
-            status = st.empty()
-            
-            total = len(st.session_state.sites)
-            successful = 0
-            failed = 0
-            
-            for i, url in enumerate(st.session_state.sites):
-                status.text(f"Auditing {i+1}/{total}: {url}")
-                result = complete_seo_audit(url)
-                st.session_state.results[url] = result
-                if result.get('is_accessible'):
-                    successful += 1
-                else:
-                    failed += 1
-                progress.progress((i + 1) / total)
-            
-            st.success(f"✅ Audit complete! {successful} successful, {failed} failed")
-            st.rerun()
-        else:
-            st.warning("No sites to audit")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Audit All Sites", type="primary", use_container_width=True):
+            if st.session_state.sites:
+                progress = st.progress(0)
+                status = st.empty()
+                
+                total = len(st.session_state.sites)
+                successful = 0
+                failed = 0
+                
+                for i, url in enumerate(st.session_state.sites):
+                    status.text(f"Auditing {i+1}/{total}: {url}")
+                    result = complete_seo_audit(url)
+                    st.session_state.results[url] = result
+                    if result.get('is_accessible'):
+                        successful += 1
+                    else:
+                        failed += 1
+                    progress.progress((i + 1) / total)
+                    time.sleep(0.5)
+                
+                st.success(f"✅ Audit complete! {successful} successful, {failed} failed")
+                st.rerun()
+            else:
+                st.warning("No sites to audit. Add sites first!")
+    
+    with col2:
+        if st.button("🔄 Audit Failed Only", use_container_width=True):
+            failed_sites = [url for url, result in st.session_state.results.items() if not result.get('is_accessible')]
+            if failed_sites:
+                progress = st.progress(0)
+                status = st.empty()
+                total = len(failed_sites)
+                successful = 0
+                
+                for i, url in enumerate(failed_sites):
+                    status.text(f"Re-auditing {i+1}/{total}: {url}")
+                    result = complete_seo_audit(url)
+                    st.session_state.results[url] = result
+                    if result.get('is_accessible'):
+                        successful += 1
+                    progress.progress((i + 1) / total)
+                    time.sleep(0.5)
+                
+                st.success(f"✅ Re-audit complete! {successful} successful")
+                st.rerun()
+            else:
+                st.info("No failed sites to re-audit")
     
     if st.session_state.results:
         st.subheader("📊 Audit Results")
@@ -670,6 +825,11 @@ with tab2:
                 with col3:
                     st.metric("Sentences", result.get('sentence_count', 0))
                 
+                if result.get('top_keywords'):
+                    st.write("**Top Keywords:**")
+                    keywords_str = ", ".join([f"{word} ({count})" for word, count in result['top_keywords'][:5]])
+                    st.write(keywords_str)
+                
                 st.markdown("---")
                 
                 # LINKS
@@ -700,7 +860,7 @@ with tab2:
                 
                 st.markdown("---")
                 
-                # SCHEMA - REAL DATA
+                # SCHEMA
                 st.write("### 🏷️ Schema Markup")
                 if result.get('has_schema'):
                     st.success(f"✅ Schema: **{result.get('schema_types', '')}**")
@@ -709,7 +869,7 @@ with tab2:
                 
                 st.markdown("---")
                 
-                # OPEN GRAPH - REAL DATA
+                # OPEN GRAPH
                 st.write("### 📱 Open Graph")
                 if result.get('has_og'):
                     st.success("✅ Open Graph tags present")
@@ -720,7 +880,7 @@ with tab2:
                 
                 st.markdown("---")
                 
-                # TWITTER - REAL DATA
+                # TWITTER
                 st.write("### 🐦 Twitter Cards")
                 if result.get('has_twitter'):
                     st.success("✅ Twitter Card tags present")
@@ -777,8 +937,10 @@ with tab2:
                 # ISSUES
                 if result.get('successes'):
                     st.write("### ✅ Successes")
-                    for s in result['successes']:
+                    for s in result['successes'][:10]:
                         st.success(s)
+                    if len(result['successes']) > 10:
+                        st.info(f"... and {len(result['successes']) - 10} more")
                 
                 if result.get('all_issues'):
                     st.write("### ⚠️ Issues")
@@ -800,7 +962,7 @@ with tab3:
                 'Errors': result.get('errors', 0),
                 'Warnings': result.get('warnings', 0),
                 'Title': result.get('title', ''),
-                'Description': result.get('meta_description', ''),
+                'Description': result.get('meta_description', '')[:100],
                 'Total Words': result.get('total_words', 0),
                 'Internal Links': result.get('internal_links', 0),
                 'External Links': result.get('external_links', 0),
@@ -813,25 +975,36 @@ with tab3:
                 'Mobile Friendly': '✅' if result.get('is_mobile_friendly') else '❌',
                 'Mixed Content': '⚠️' if result.get('has_mixed_content') else '✅',
                 'Lazy Loading': '✅' if result.get('has_lazy_loading') else '❌',
-                'Accessible': '✅' if result.get('is_accessible') else '❌'
+                'Accessible': '✅' if result.get('is_accessible') else '❌',
+                'Response Time': f"{result.get('response_time', 0)}s"
             })
         
         df = pd.DataFrame(data)
         df = df.sort_values('Score', ascending=False)
         st.dataframe(df, use_container_width=True, hide_index=True)
         
-        csv = df.to_csv(index=False)
-        st.download_button(
-            "📥 Download Full SEO Report (CSV)",
-            data=csv,
-            file_name=f"seo_audit_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = df.to_csv(index=False)
+            st.download_button(
+                "📥 Download Full SEO Report (CSV)",
+                data=csv,
+                file_name=f"seo_audit_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col2:
+            # Summary statistics
+            st.write("**Summary Statistics:**")
+            st.write(f"- Average Score: {df['Score'].mean():.1f}/100")
+            st.write(f"- Total Sites: {len(df)}")
+            st.write(f"- Sites with Errors: {df[df['Errors'] > 0].shape[0]}")
+            st.write(f"- Average Words: {df['Total Words'].mean():.0f}")
     else:
         st.info("Run an SEO audit first to generate reports")
 
 st.markdown("---")
-st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y%m%d_%H%M:%S')}")
+st.caption(f"🔄 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 st.caption(f"📊 Total Sites: {len(st.session_state.sites)} | Audited: {len(st.session_state.results)}")
 st.caption("🚀 Complete SEO Audit | All 50+ Metrics | Real Data")
